@@ -1,0 +1,69 @@
+"""api/analysis.py — 逐 commit 理解 + 周期/贡献报告"""
+from __future__ import annotations
+
+import json
+
+from fastapi import APIRouter, Depends
+
+from app.api.deps import current_user
+from app.api.projects import _check_access, _default_branch
+from app.db.session import get_conn
+from app.queue import queue
+
+router = APIRouter(prefix="/api/projects", tags=["analysis"])
+
+
+@router.get("/{pid}/commits")
+def get_commits(pid: str, range: str = "30d", branch: str | None = None,
+                user: dict = Depends(current_user)):
+    _check_access(user, pid)
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "SELECT * FROM commit_analysis WHERE project_id=? ORDER BY committed_at DESC LIMIT 200",
+            (pid,))
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    return {"data": [{
+        "sha": r["commit_sha"][:7], "author": r["author"], "branch": r["branch"],
+        "when": r["committed_at"], "add": r["loc_add"], "del": r["loc_del"],
+        "modules": json.loads(r["modules"]) if r["modules"] else [],
+        "drift": bool(r["msg_drift"]), "summary": r["summary"],
+        "problem": r["problem"], "approach": r["approach"], "rawMsg": r["raw_msg"],
+    } for r in rows]}
+
+
+@router.post("/{pid}/analyze")
+def trigger_analyze(pid: str, branch: str | None = None, user: dict = Depends(current_user)):
+    _check_access(user, pid)
+    branch = branch or _default_branch(pid)
+    jid = queue.enqueue("commit_analyze", pid, branch=branch,
+                        priority=queue.PRIORITY_MANUAL, detail=f"分析 {branch} commits")
+    return {"jobId": jid}
+
+
+@router.get("/{pid}/contributors")
+def get_contributors(pid: str, mode: str = "log", user: dict = Depends(current_user)):
+    _check_access(user, pid)
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT payload FROM reports WHERE project_id=? AND type=? "
+            "ORDER BY created_at DESC LIMIT 1", (pid, f"contributor_{mode}")).fetchone()
+    finally:
+        conn.close()
+    if row:
+        return json.loads(row["payload"])
+    # 无缓存 → 触发任务
+    queue.enqueue("contributor_report", pid, payload={"mode": mode},
+                  priority=queue.PRIORITY_MANUAL, detail=f"贡献报告 {mode}")
+    return {"mode": mode, "contributors": [], "pending": True}
+
+
+@router.post("/{pid}/reports/period")
+def trigger_period(pid: str, range: str = "30d", user: dict = Depends(current_user)):
+    _check_access(user, pid)
+    jid = queue.enqueue("period_report", pid, payload={"range": range},
+                        priority=queue.PRIORITY_MANUAL, detail="周期报告")
+    return {"jobId": jid}

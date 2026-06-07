@@ -1,0 +1,8 @@
+code-review/backend/.venv
+__pycache__
+backend/.venv
+backend/storage/repos/cd/bare/objects
+backend/storage/repos/http-test/bare/objects
+backend/storage/repos/pt/bare/objects
+frontend/dist
+frontend/node_modules

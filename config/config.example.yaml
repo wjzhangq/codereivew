@@ -1,0 +1,104 @@
+# ===========================================================================
+# 代码 Review 平台 — 统一配置示例 (config.example.yaml)
+# 复制为 config.yaml 后填写;凭据走 *_env 间接引用环境变量,切勿写明文。
+# ===========================================================================
+
+server:
+  host: 0.0.0.0
+  port: 8080
+
+storage:
+  root: ./storage
+  meta_db: ./storage/meta.sqlite
+  vectors_dir: ./storage/vectors
+  graphs_dir: ./storage/graphs
+  analytics_dir: ./storage/analytics
+  repos_dir: ./storage/repos
+  reports_dir: ./storage/reports
+
+auth:
+  api_key:
+    enabled: true
+  session:
+    jwt_secret_env: JWT_SECRET          # 必填:JWT 签名密钥
+    ttl_hours: 12
+  admin:                                 # 引导管理员账号(首启创建)
+    username: admin
+    password_hash_env: ADMIN_PASSWORD_HASH   # 推荐:注入 argon2 哈希
+    password: "admin12345"               # 仅本地测试用;生产请用 password_hash_env 并删除此行
+  password_hashing: argon2
+
+platform:                                # 仅用于身份解析 / 可选仓库发现,不用于登录
+  gitlab:
+    enabled: false
+    base_url: https://gitlab.internal
+    token_env: GL_TOKEN
+  github:
+    enabled: false
+    token_env: GH_TOKEN
+
+git:
+  worktree_per_branch: true
+  branches:
+    mode: whitelist
+    include_default: forced              # 默认分支强制纳入,网页勾选其余
+  exclude_globs:                         # 贡献/分析排除
+    - "**/vendor/**"
+    - "**/node_modules/**"
+    - "**/*.lock"
+    - "**/package-lock.json"
+    - "**/dist/**"
+    - "**/*.generated.*"
+
+queue:
+  workers: 4
+  llm_workers: 1
+  poll_interval_s: 1.5
+  max_attempts: 3
+  backoff_base_s: 5
+
+security:
+  gitleaks: true
+  semgrep: true
+  sca: true
+  llm_review: true
+
+analysis:
+  commit_granularity: commit             # commit | merge_only
+  backfill:
+    mode: max_of                         # 取覆盖更多者
+    last_days: 30
+    last_count: 100
+  use_commit_message: false              # 忽略 msg,以 LLM 理解为准
+  detect_message_drift: true
+
+embeddings:
+  granularity: signature_plus_body       # signature | signature_plus_body
+  index_commit_summaries: true
+
+models:
+  providers:
+    modelgate:
+      type: openai_compatible
+      base_url: http://modelgate.internal/v1
+      api_key_env: MODELGATE_KEY
+    vllm_local:
+      type: openai_compatible
+      base_url: http://vllm.internal/v1
+      api_key_env: VLLM_KEY
+  llm:
+    default:                             # wiki / 问答
+      provider: modelgate
+      model: gpt-4o
+    cheap:                               # 逐 commit
+      provider: vllm_local
+      model: qwen2.5-coder-7b
+  embedding:
+    default:
+      provider: modelgate
+      model: text-embedding-3-large
+      dim: 1024
+  routing:
+    commit_analyze: cheap
+    wiki: default
+    qa: default

@@ -1,0 +1,30 @@
+# 运行时数据
+storage/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# 真实配置(含路径/密钥引用)
+config/config.yaml
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 环境
+.env
+*.local
+
+# 编辑器
+.DS_Store
+.idea/
+.vscode/

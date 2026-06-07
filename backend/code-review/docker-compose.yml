@@ -1,0 +1,56 @@
+# ===========================================================================
+# docker-compose.yml — api + worker(可多副本) + web
+# 无 Redis、无独立 DB 服务(SQLite/sqlite-vec/DuckDB 全 in-process)。
+# storage/ 挂持久卷;SQLite 写库放本地盘(避免网络文件系统锁)。
+# ===========================================================================
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-min-32-bytes-long}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes:
+      - storage:/app/storage
+      - ./config:/config
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: python -m app.queue.worker
+    deploy:
+      replicas: 2          # worker 可多副本
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-min-32-bytes-long}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes:
+      - storage:/app/storage
+      - ./config:/config
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  storage:

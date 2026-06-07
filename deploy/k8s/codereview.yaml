@@ -1,0 +1,72 @@
+# k8s 部署(M5)— api/worker 分 Deployment,storage 用 PVC(SQLite 单写绑本地盘)
+apiVersion: v1
+kind: Namespace
+metadata: { name: codereview }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: cr-storage, namespace: codereview }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 50Gi } }
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: cr-secrets, namespace: codereview }
+type: Opaque
+stringData:
+  JWT_SECRET: "REPLACE_WITH_32B_SECRET"
+  CR_ENCRYPTION_KEY: "REPLACE_WITH_FERNET_KEY"
+  ADMIN_PASSWORD_HASH: ""
+  GH_TOKEN: ""
+  GL_TOKEN: ""
+  MODELGATE_KEY: ""
+  VLLM_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cr-api, namespace: codereview }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: cr-api } }
+  template:
+    metadata: { labels: { app: cr-api } }
+    spec:
+      containers:
+        - name: api
+          image: codereview-backend:latest
+          command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+          ports: [{ containerPort: 8080 }]
+          envFrom: [{ secretRef: { name: cr-secrets } }]
+          env: [{ name: CR_CONFIG, value: /config/config.yaml }]
+          volumeMounts: [{ name: storage, mountPath: /app/storage }]
+      volumes:
+        - name: storage
+          persistentVolumeClaim: { claimName: cr-storage }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: cr-worker, namespace: codereview }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: cr-worker } }
+  template:
+    metadata: { labels: { app: cr-worker } }
+    spec:
+      containers:
+        - name: worker
+          image: codereview-backend:latest
+          command: ["python", "-m", "app.queue.worker"]
+          envFrom: [{ secretRef: { name: cr-secrets } }]
+          env: [{ name: CR_CONFIG, value: /config/config.yaml }]
+          volumeMounts: [{ name: storage, mountPath: /app/storage }]
+      volumes:
+        - name: storage
+          persistentVolumeClaim: { claimName: cr-storage }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: cr-api, namespace: codereview }
+spec:
+  selector: { app: cr-api }
+  ports: [{ port: 8080, targetPort: 8080 }]
