@@ -37,7 +37,16 @@ def chat(task: str, system: str, user: str, *, json_mode: bool = False,
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
     except Exception as e:  # noqa: BLE001
-        log.warning("LLM provider 不可达(%s),使用离线 stub: %s", rm.provider_name, e)
+        # ---- 详细错误日志,方便排查 LLM 不通的根因 ----
+        import traceback
+        resp_body = ""
+        if isinstance(e, httpx.HTTPStatusError):
+            resp_body = f" | response={e.response.text[:500]}"
+        log.error(
+            "LLM 调用失败 [provider=%s model=%s base_url=%s task=%s]: %s%s\n%s",
+            rm.provider_name, rm.model, rm.base_url, task,
+            e, resp_body, traceback.format_exc(),
+        )
         return _stub(task, json_mode)
 
 

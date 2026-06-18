@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Button, Card, Empty, Segmented, Space, Spin, Table, Tabs, Tag } from 'antd'
+import { Button, Card, Segmented, Space, Spin, Table, Tabs, Tag } from 'antd'
 import {
   DownloadOutlined,
   CaretRightOutlined,
@@ -8,8 +8,9 @@ import {
   WarningOutlined,
 } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { useCommits, useContributors } from '../hooks/api'
+import { useCommits, useContributors, useAnalyzeCommits } from '../hooks/api'
 import { Avatar, MiniBars } from '../components/widgets'
+import { JobStatusEmpty } from '../components/JobStatusEmpty'
 
 type Commit = {
   sha: string
@@ -108,6 +109,7 @@ function PeriodTab() {
   const { id = '' } = useParams()
   const [range, setRange] = useState('30d')
   const { data: commits = [], isLoading } = useCommits(id, range)
+  const analyze = useAnalyzeCommits(id)
 
   return (
     <div>
@@ -136,7 +138,14 @@ function PeriodTab() {
           <Spin />
         </div>
       ) : (commits as Commit[]).length === 0 ? (
-        <Empty description="本周期暂无已分析提交" />
+        <JobStatusEmpty
+          project={id}
+          types={['commit_analyze']}
+          emptyText="本周期暂无已分析提交"
+          triggerText="立即分析提交"
+          onTrigger={() => analyze.mutate()}
+          triggering={analyze.isPending}
+        />
       ) : (
         (commits as Commit[]).map((c) => <CommitCard key={c.sha} c={c} />)
       )}
@@ -234,6 +243,15 @@ function ContribTab() {
           columns={columns}
           dataSource={list}
           pagination={false}
+          locale={{
+            emptyText: (
+              <JobStatusEmpty
+                project={id}
+                types={['contributor_report']}
+                emptyText="暂无贡献数据(首次访问已自动入队,稍后刷新)"
+              />
+            ),
+          }}
         />
         <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-3)' }}>
           身份解析:优先经平台 API 解析为平台账号;解析不到时回落 git email 并标记「未验证」。

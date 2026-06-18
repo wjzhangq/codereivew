@@ -79,25 +79,36 @@ def claim(worker_id: str) -> dict | None:
         conn.close()
 
 
-def complete(job_id: int, result_ref: str | None = None) -> None:
+def complete(job_id: int, result_ref: str | None = None,
+             detail: str | None = None) -> None:
     conn = get_conn()
     try:
-        conn.execute("UPDATE jobs SET status='done', progress=100, result_ref=?, "
-                     "updated_at=datetime('now') WHERE id=?", (result_ref, job_id))
+        if detail is not None:
+            conn.execute("UPDATE jobs SET status='done', progress=100, result_ref=?, "
+                         "detail=?, error=NULL, updated_at=datetime('now') WHERE id=?",
+                         (result_ref, detail, job_id))
+        else:
+            conn.execute("UPDATE jobs SET status='done', progress=100, result_ref=?, "
+                         "error=NULL, updated_at=datetime('now') WHERE id=?",
+                         (result_ref, job_id))
         conn.commit()
     finally:
         conn.close()
 
 
-def fail(job_id: int, error: str) -> None:
-    """退避重试:attempts++ 后按 attempts^2 * backoff_base 延后 run_after。"""
+def fail(job_id: int, error: str, permanent: bool = False) -> None:
+    """退避重试:attempts++ 后按 attempts^2 * backoff_base 延后 run_after。
+
+    permanent=True 时跳过退避,直接标 failed —— 用于确定性的零产出
+    (缺扫描器 / 无图谱 / 无 commit),重试也不会有结果。
+    """
     s = get_settings()
     conn = get_conn()
     try:
         cur = conn.execute("SELECT attempts FROM jobs WHERE id=?", (job_id,))
         row = cur.fetchone()
         attempts = row["attempts"] if row else 1
-        if attempts >= s.queue.max_attempts:
+        if permanent or attempts >= s.queue.max_attempts:
             conn.execute("UPDATE jobs SET status='failed', error=?, updated_at=datetime('now') "
                          "WHERE id=?", (error, job_id))
         else:
@@ -146,5 +157,14 @@ def list_jobs(status: str | None = None, limit: int = 50) -> list[dict]:
         else:
             cur = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,))
         return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_job(job_id: int) -> dict | None:
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()

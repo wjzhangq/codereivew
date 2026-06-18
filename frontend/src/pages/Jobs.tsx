@@ -13,10 +13,13 @@ import {
   Row,
   Col,
   Statistic,
+  Alert,
+  Drawer,
+  Descriptions,
 } from 'antd'
 import { ReloadOutlined, RedoOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { useJobs, useRetryJob } from '../hooks/api'
+import { useJobsFull, useRetryJob } from '../hooks/api'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -27,13 +30,16 @@ interface Job {
   type: string
   project: string
   branch?: string
-  priority: 'high' | 'medium' | 'low'
+  priority: 'high' | 'medium' | 'low' | string
   status: JobStatus
   progress?: number
   worker?: string | null
   detail?: string
+  error?: string | null
+  attempts?: number
+  createdAt?: string
+  lockedAt?: string
   updatedAt?: string
-  finishedAt?: string
 }
 
 const TYPE_COLOR: Record<string, string> = {
@@ -57,9 +63,9 @@ const TYPE_LABEL: Record<string, string> = {
 }
 
 const PRIORITY_META: Record<string, { color: string; label: string }> = {
-  high: { color: 'red', label: '高' },
-  medium: { color: 'orange', label: '中' },
-  low: { color: 'default', label: '低' },
+  高: { color: 'red', label: '高' },
+  中: { color: 'orange', label: '中' },
+  低: { color: 'default', label: '低' },
 }
 
 const STATUS_META: Record<JobStatus, { color: string; label: string }> = {
@@ -69,29 +75,14 @@ const STATUS_META: Record<JobStatus, { color: string; label: string }> = {
   failed: { color: 'error', label: '失败' },
 }
 
-const CLAIM_SQL = `BEGIN IMMEDIATE;
-
-UPDATE jobs
-SET status = 'running',
-    worker = :worker_id,
-    started_at = CURRENT_TIMESTAMP
-WHERE id = (
-  SELECT id FROM jobs
-  WHERE status = 'queued'
-    AND scheduled_at <= CURRENT_TIMESTAMP
-  ORDER BY priority DESC, id ASC
-  LIMIT 1
-)
-RETURNING id, type, project, branch, payload;
-
-COMMIT;`
-
 export default function Jobs() {
   const [filter, setFilter] = useState<'all' | JobStatus>('all')
-  const { data, isLoading, refetch, isFetching } = useJobs()
+  const { data, isLoading, refetch, isFetching } = useJobsFull()
   const retry = useRetryJob()
+  const [detailJob, setDetailJob] = useState<Job | null>(null)
 
-  const jobs: Job[] = useMemo(() => data ?? [], [data])
+  const jobs: Job[] = useMemo(() => data?.data ?? [], [data])
+  const claimSql: string = data?.claimSql ?? '-- 加载中…'
 
   const stats = useMemo(() => {
     const running = jobs.filter((j) => j.status === 'running').length
@@ -168,7 +159,7 @@ export default function Jobs() {
     {
       title: '状态 / 进度',
       key: 'status',
-      width: 220,
+      width: 240,
       render: (_, row) => {
         const meta = STATUS_META[row.status]
         if (row.status === 'running') {
@@ -179,10 +170,40 @@ export default function Jobs() {
                 <Tag color={meta.color}>{meta.label}</Tag>
               </Space>
               <Progress percent={row.progress ?? 0} size="small" status="active" />
+              {row.detail && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {row.detail}
+                </Text>
+              )}
             </Space>
           )
         }
-        return <Tag color={meta.color}>{meta.label}</Tag>
+        if (row.status === 'failed') {
+          return (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Tag color={meta.color}>{meta.label}</Tag>
+              {row.error && (
+                <Text
+                  type="danger"
+                  style={{ fontSize: 12, whiteSpace: 'normal' }}
+                  ellipsis={{ tooltip: row.error }}
+                >
+                  {row.error}
+                </Text>
+              )}
+            </Space>
+          )
+        }
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color={meta.color}>{meta.label}</Tag>
+            {row.detail && (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {row.detail}
+              </Text>
+            )}
+          </Space>
+        )
       },
     },
     {
@@ -201,25 +222,31 @@ export default function Jobs() {
       key: 'time',
       render: (_, row) => (
         <Text type="secondary" style={{ fontSize: 12 }}>
-          {row.finishedAt ?? row.updatedAt ?? '—'}
+          {row.updatedAt ?? '—'}
         </Text>
       ),
     },
     {
       title: '',
       key: 'action',
-      width: 90,
-      render: (_, row) =>
-        row.status === 'failed' ? (
-          <Button
-            size="small"
-            icon={<RedoOutlined />}
-            loading={retry.isPending}
-            onClick={() => retry.mutate(row.id)}
-          >
-            重试
+      width: 150,
+      render: (_, row) => (
+        <Space size={4}>
+          <Button size="small" type="link" onClick={() => setDetailJob(row)}>
+            详情
           </Button>
-        ) : null,
+          {row.status === 'failed' && (
+            <Button
+              size="small"
+              icon={<RedoOutlined />}
+              loading={retry.isPending}
+              onClick={() => retry.mutate(row.id)}
+            >
+              重试
+            </Button>
+          )}
+        </Space>
+      ),
     },
   ]
 
@@ -332,9 +359,65 @@ export default function Jobs() {
             margin: 0,
           }}
         >
-          <code>{CLAIM_SQL}</code>
+          <code>{claimSql}</code>
         </pre>
       </Card>
+
+      <Drawer
+        title={detailJob ? `执行详情 · ${detailJob.id}` : '执行详情'}
+        width={560}
+        open={!!detailJob}
+        onClose={() => setDetailJob(null)}
+        extra={
+          detailJob?.status === 'failed' && (
+            <Button
+              icon={<RedoOutlined />}
+              loading={retry.isPending}
+              onClick={() => detailJob && retry.mutate(detailJob.id)}
+            >
+              重试
+            </Button>
+          )
+        }
+      >
+        {detailJob && (
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            {detailJob.status === 'failed' && detailJob.error && (
+              <Alert
+                type="error"
+                showIcon
+                message="执行失败"
+                description={
+                  <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 13 }}>
+                    {detailJob.error}
+                  </pre>
+                }
+              />
+            )}
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="任务 ID">{detailJob.id}</Descriptions.Item>
+              <Descriptions.Item label="类型">
+                {TYPE_LABEL[detailJob.type] ?? detailJob.type}
+              </Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <Tag color={STATUS_META[detailJob.status].color}>
+                  {STATUS_META[detailJob.status].label}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="项目 / 分支">
+                {detailJob.project} / {detailJob.branch ?? '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="进度">{detailJob.progress ?? 0}%</Descriptions.Item>
+              <Descriptions.Item label="尝试次数">{detailJob.attempts ?? 0}</Descriptions.Item>
+              <Descriptions.Item label="Worker">{detailJob.worker ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="执行摘要">{detailJob.detail ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="领取时间">{detailJob.lockedAt ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{detailJob.createdAt ?? '—'}</Descriptions.Item>
+              <Descriptions.Item label="更新时间">{detailJob.updatedAt ?? '—'}</Descriptions.Item>
+            </Descriptions>
+          </Space>
+        )}
+      </Drawer>
     </div>
   )
 }

@@ -12,6 +12,7 @@ import json
 from app.core.logging import get_logger
 from app.db.session import get_conn
 from app.git import history
+from app.queue.result import JobResult
 
 log = get_logger("analytics.contributor")
 
@@ -32,7 +33,7 @@ def _resolve_identity(project_id: str, email: str, name: str) -> dict:
     return {"id": email, "name": name or email, "verified": False}
 
 
-def build_contributor_report(project_id: str, branch: str | None, mode: str) -> dict:
+def build_contributor_report(project_id: str, branch: str | None, mode: str) -> JobResult:
     conn = get_conn()
     try:
         p = conn.execute("SELECT default_branch FROM projects WHERE id=?",
@@ -46,13 +47,23 @@ def build_contributor_report(project_id: str, branch: str | None, mode: str) -> 
     else:
         report = _by_log(project_id, branch)
     _save(project_id, mode, report)
-    return report
+    contributors = report.get("contributors", [])
+    if contributors:
+        skipped = []
+    elif mode == "blame":
+        skipped = ["工作区无文件可 blame(分支未建 worktree 或无文件)"]
+    else:
+        skipped = [f"{branch} 无 commit 记录"]
+    return JobResult(produced=len(contributors), skipped=skipped,
+                     note=f"{mode} 贡献报告:{len(contributors)} 人")
 
 
 def _by_log(project_id: str, branch: str) -> dict:
+    from app.core.config import get_settings
+    bf = get_settings().analysis.backfill
     until = dt.datetime.now(dt.timezone.utc).date().isoformat()
-    since = (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=30)).isoformat()
-    commits = history.log_numstat(project_id, branch, since, until)
+    since = (dt.datetime.now(dt.timezone.utc).date() - dt.timedelta(days=bf.last_days)).isoformat()
+    commits = history.log_numstat(project_id, branch, since, until, last_count=bf.last_count)
     agg: dict[str, dict] = {}
     for c in commits:
         ident = _resolve_identity(project_id, c["email"], c["author"])
@@ -75,14 +86,10 @@ def _by_log(project_id: str, branch: str) -> dict:
 
 
 def _by_blame(project_id: str, branch: str) -> dict:
-    from app.parsing.graph_store import GraphStore
-    try:
-        gs = GraphStore(project_id, branch)
-        files = [f["path"] for f in gs.all_files()]
-        gs.close()
-    except FileNotFoundError:
-        files = []
-    owners = history.blame_ownership(project_id, branch, files[:200])  # 限规模
+    # 直接对项目工作区的真实文件 blame(谁拥有代码),不依赖图谱 ——
+    # 文档/配置等非代码仓库也能正确归属。
+    files = history.list_tracked_files(project_id, branch)
+    owners = history.blame_ownership(project_id, branch, files[:500])  # 限规模
     total = sum(owners.values()) or 1
     out = []
     for email, lines in sorted(owners.items(), key=lambda kv: -kv[1]):

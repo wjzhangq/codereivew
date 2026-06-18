@@ -9,11 +9,12 @@ import json
 from app.analytics.duck import duck
 from app.core.logging import get_logger
 from app.db.session import get_conn
+from app.queue.result import JobResult
 
 log = get_logger("analytics.period")
 
 
-def build_period_report(project_id: str, branch: str | None, range_spec: str) -> dict:
+def build_period_report(project_id: str, branch: str | None, range_spec: str) -> JobResult:
     """聚合 commit_analysis → 周期报告(commit 列表 + 模块统计 + drift 计数)。"""
     with duck() as con:
         rows = con.execute("""
@@ -48,7 +49,9 @@ def build_period_report(project_id: str, branch: str | None, range_spec: str) ->
         "commits": commits,
     }
     _save(project_id, "period", range_spec, report)
-    return report
+    skipped = [] if commits else ["无已分析 commit(请先触发 Commit 理解)"]
+    return JobResult(produced=len(commits), skipped=skipped,
+                     note=f"周期报告:{len(commits)} commit,{drift_count} drift")
 
 
 def _save(project_id: str, type: str, range_spec: str, payload: dict) -> None:

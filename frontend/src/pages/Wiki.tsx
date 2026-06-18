@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { App, Button, Card, Empty, Space, Spin, Tag } from 'antd'
 import { ReloadOutlined, MessageOutlined } from '@ant-design/icons'
 import { useWikiList, useWikiPage, useRefreshWiki } from '../hooks/api'
+import { JobStatusEmpty } from '../components/JobStatusEmpty'
 
 type WikiPageItem = {
   slug: string
@@ -113,6 +114,15 @@ export default function Wiki() {
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
+        ) : list.length === 0 && !listLoading ? (
+          <JobStatusEmpty
+            project={id}
+            types={['wiki_gen']}
+            emptyText="尚未生成 Wiki"
+            triggerText="生成 Wiki"
+            onTrigger={doRefresh}
+            triggering={refresh.isPending}
+          />
         ) : !page ? (
           <Empty description="选择左侧页面查看 Wiki" />
         ) : (

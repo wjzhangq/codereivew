@@ -18,6 +18,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import { useFindings, useScan, useUpdateFinding } from '../hooks/api'
 import { Sev, SEV } from '../components/widgets'
+import { JobStatusEmpty } from '../components/JobStatusEmpty'
 
 type Finding = {
   id: string
@@ -213,6 +214,18 @@ export default function Security() {
           dataSource={rows}
           pagination={{ pageSize: 12, hideOnSinglePage: true }}
           onRow={(record) => ({ onClick: () => setActive(record), style: { cursor: 'pointer' } })}
+          locale={{
+            emptyText: (
+              <JobStatusEmpty
+                project={id}
+                types={['security_scan']}
+                emptyText="暂无安全发现"
+                triggerText="立即扫描"
+                onTrigger={runScan}
+                triggering={scan.isPending}
+              />
+            ),
+          }}
         />
       </Card>
 

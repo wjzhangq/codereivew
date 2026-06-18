@@ -21,6 +21,7 @@ export const useSetWhitelist = (id: string) => {
 export const useGraph = (id: string, branch?: string) => useQuery({ queryKey: ['graph', id, branch], queryFn: () => getOne<any>(`/api/projects/${id}/graph`, { branch }), enabled: !!id })
 
 export const useCommits = (id: string, range = '30d') => useQuery({ queryKey: ['commits', id, range], queryFn: () => getList<any>(`/api/projects/${id}/commits`, { range }), enabled: !!id })
+export const useAnalyzeCommits = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/analyze`) })
 export const useContributors = (id: string, mode: 'log' | 'blame') => useQuery({ queryKey: ['contrib', id, mode], queryFn: () => getOne<any>(`/api/projects/${id}/contributors`, { mode }), enabled: !!id })
 
 export const useFindings = (id: string, status?: string) => useQuery({ queryKey: ['findings', id, status], queryFn: () => getList<any>(`/api/projects/${id}/findings`, { status }), enabled: !!id })
@@ -37,9 +38,23 @@ export const useWikiPage = (id: string, page: string) => useQuery({ queryKey: ['
 export const useRefreshWiki = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/wiki/refresh`) })
 
 export const useJobs = (status?: string) => useQuery({ queryKey: ['jobs', status], queryFn: () => getList<any>('/api/jobs', { status }), refetchInterval: 4000 })
+export const useJobsFull = (status?: string) => useQuery({ queryKey: ['jobsFull', status], queryFn: () => getOne<any>('/api/jobs', { status }), refetchInterval: 4000 })
+export const useJobDetail = (jobId?: string) => useQuery({ queryKey: ['job', jobId], queryFn: () => getOne<any>(`/api/jobs/${(jobId ?? '').replace('J-', '')}`), enabled: !!jobId })
+
+// 给空面板用:取某项目某类任务的最新一条,据此区分 无任务/运行中/失败
+export const useLatestJob = (project: string, types: string[]) => useQuery({
+  queryKey: ['latestJob', project, types.join(',')],
+  queryFn: async () => {
+    const jobs = await getList<any>('/api/jobs')
+    const mine = jobs.filter((j) => j.project === project && types.includes(j.type))
+    return mine[0] ?? null  // 后端已按 created_at DESC 排序
+  },
+  enabled: !!project,
+  refetchInterval: 4000,
+})
 export const useRetryJob = () => {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: (id: string) => post(`/api/jobs/${id.replace('J-', '')}/retry`), onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }) })
+  return useMutation({ mutationFn: (id: string) => post(`/api/jobs/${id.replace('J-', '')}/retry`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['jobs'] }); qc.invalidateQueries({ queryKey: ['jobsFull'] }) } })
 }
 
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: () => getList<any>('/api/users') })

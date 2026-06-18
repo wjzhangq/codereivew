@@ -10,6 +10,7 @@ from app.core.logging import audit, get_logger
 from app.core.security import decrypt_secret
 from app.db.session import get_conn
 from app.queue import queue
+from app.queue.result import JobResult
 
 log = get_logger("queue.handlers")
 
@@ -31,16 +32,17 @@ def _deploy_key(project: dict) -> str | None:
 # --------------------------------------------------------------------------- #
 # fetch / index
 # --------------------------------------------------------------------------- #
-def handle_fetch(job: dict) -> None:
+def handle_fetch(job: dict) -> JobResult:
     from app.git import repo
     p = _project(job["project_id"])
     key = _deploy_key(p)
     repo.clone_mirror(p["git_url"], p["id"], key)
     _sync_branches(p["id"])
     queue.update_progress(job["id"], 100, "fetch 完成")
+    return JobResult(produced=1, note="fetch 完成")
 
 
-def handle_index_build(job: dict) -> None:
+def handle_index_build(job: dict) -> JobResult:
     """全量索引:对所有白名单分支建 worktree → 图谱 → 向量。"""
     from app.git import repo, worktree
     from app.parsing import engine
@@ -52,6 +54,10 @@ def handle_index_build(job: dict) -> None:
     _sync_branches(pid)
 
     branches = _whitelisted_branches(pid)
+    if not branches:
+        _set_status(pid, "active", 100)
+        return JobResult(produced=0, skipped=["无白名单分支(默认分支同步失败?)"],
+                         note="无分支可索引")
     total = max(len(branches), 1)
     for i, br in enumerate(branches):
         worktree.add_worktree(pid, br)
@@ -63,9 +69,27 @@ def handle_index_build(job: dict) -> None:
     _update_project_stats(pid)
     _set_status(pid, "active", 100)
     audit("index_build", project=pid, branches=len(branches))
+    _enqueue_post_index(pid, branches)
+    return JobResult(produced=len(branches), note=f"索引 {len(branches)} 个分支")
 
 
-def handle_index_incremental(job: dict) -> None:
+def _enqueue_post_index(project_id: str, branches: list[str]) -> None:
+    """索引完成后自动串起下游分析链:逐分支 commit 理解 + 安全扫描,项目级 Wiki。
+
+    这是接入仓库后报告/面板有内容的关键 —— 不再等 webhook push 或人工点击。
+    周期/贡献报告不在此处入队:它们聚合 commit_analysis,必须等 commit_analyze
+    跑完才有数据,否则会因零产出判失败。改由 commit_analyze 完成后串联(见下)。
+    """
+    for br in branches:
+        queue.enqueue("commit_analyze", project_id, branch=br,
+                      priority=queue.PRIORITY_BACKFILL, detail=f"自动分析 {br} commits")
+        queue.enqueue("security_scan", project_id, branch=br,
+                      priority=queue.PRIORITY_BACKFILL, detail=f"自动安全扫描 {br}")
+    queue.enqueue("wiki_gen", project_id, priority=queue.PRIORITY_BACKFILL,
+                  detail="自动生成 Wiki")
+
+
+def handle_index_incremental(job: dict) -> JobResult:
     """增量:只重解析/重嵌变更分支。"""
     from app.git import worktree
     from app.parsing import engine
@@ -80,6 +104,7 @@ def handle_index_incremental(job: dict) -> None:
     _index_vectors(pid, br)  # SHA-256 复用未变更 chunk
     _mark_branch_indexed(pid, br)
     queue.update_progress(job["id"], 100, f"增量索引 {br} 完成")
+    return JobResult(produced=1, note=f"增量索引 {br} 完成")
 
 
 def _index_vectors(project_id: str, branch: str) -> None:
@@ -101,34 +126,43 @@ def _index_vectors(project_id: str, branch: str) -> None:
 # --------------------------------------------------------------------------- #
 # commit 分析 / 安全扫描 / 报告 / wiki
 # --------------------------------------------------------------------------- #
-def handle_commit_analyze(job: dict) -> None:
+def handle_commit_analyze(job: dict) -> JobResult:
     from app.analysis.commit_analyzer import analyze_branch
-    analyze_branch(job["project_id"], job["branch"],
-                   progress_cb=lambda pct, d: queue.update_progress(job["id"], pct, d))
+    res = analyze_branch(job["project_id"], job["branch"],
+                         progress_cb=lambda pct, d: queue.update_progress(job["id"], pct, d))
+    # 有 commit 产出后,串联聚合类报告(此时 commit_analysis 已有数据)。
+    if res.produced > 0:
+        pid = job["project_id"]
+        queue.enqueue("period_report", pid, payload={"range": "30d"},
+                      priority=queue.PRIORITY_BACKFILL, detail="自动周期报告")
+        queue.enqueue("contributor_report", pid, payload={"mode": "log"},
+                      priority=queue.PRIORITY_BACKFILL, detail="自动贡献报告(by_log)")
+    return res
 
 
-def handle_security_scan(job: dict) -> None:
+def handle_security_scan(job: dict) -> JobResult:
     from app.security.scanner import scan_branch
-    scan_branch(job["project_id"], job["branch"],
-                progress_cb=lambda pct, d: queue.update_progress(job["id"], pct, d))
+    res = scan_branch(job["project_id"], job["branch"],
+                      progress_cb=lambda pct, d: queue.update_progress(job["id"], pct, d))
     audit("security_scan", project=job["project_id"], branch=job["branch"])
+    return res
 
 
-def handle_period_report(job: dict) -> None:
+def handle_period_report(job: dict) -> JobResult:
     from app.analytics.period_report import build_period_report
     payload = json.loads(job["payload"]) if job["payload"] else {}
-    build_period_report(job["project_id"], job["branch"], payload.get("range", "30d"))
+    return build_period_report(job["project_id"], job["branch"], payload.get("range", "30d"))
 
 
-def handle_contributor_report(job: dict) -> None:
+def handle_contributor_report(job: dict) -> JobResult:
     from app.analytics.contributor import build_contributor_report
     payload = json.loads(job["payload"]) if job["payload"] else {}
-    build_contributor_report(job["project_id"], job["branch"], payload.get("mode", "log"))
+    return build_contributor_report(job["project_id"], job["branch"], payload.get("mode", "log"))
 
 
-def handle_wiki_gen(job: dict) -> None:
+def handle_wiki_gen(job: dict) -> JobResult:
     from app.wiki.generator import generate_wiki
-    generate_wiki(job["project_id"], job["branch"])
+    return generate_wiki(job["project_id"], job["branch"])
 
 
 # --------------------------------------------------------------------------- #

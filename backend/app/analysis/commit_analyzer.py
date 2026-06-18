@@ -13,6 +13,7 @@ from app.core.logging import get_logger
 from app.db.session import get_conn
 from app.git import history
 from app.llm import client
+from app.queue.result import JobResult
 
 log = get_logger("analysis.commit")
 
@@ -69,6 +70,11 @@ def analyze_commit(project_id: str, branch: str, sha: str, gs=None) -> dict:
     modules = gs.modules_for_files([f.file for f in diff.files]) if gs else []
     out = client.chat_json("commit_analyze", _SYSTEM, _prompt(diff, modules))
     summary = out.get("summary", "")
+    if not out or "（占位)" in summary:
+        log.error(
+            "commit %s 落入占位结果(LLM 未生成真实内容,见上方 'LLM 调用失败' 日志): out=%s",
+            sha[:10], out,
+        )
     drift = detect_message_drift(summary, diff.raw_msg) if cfg.analysis.detect_message_drift else False
 
     conn = get_conn()
@@ -88,7 +94,7 @@ def analyze_commit(project_id: str, branch: str, sha: str, gs=None) -> dict:
 
 
 def analyze_branch(project_id: str, branch: str,
-                   progress_cb: Callable[[int, str], None] | None = None) -> int:
+                   progress_cb: Callable[[int, str], None] | None = None) -> JobResult:
     cfg = get_settings().analysis.backfill
     shas = history.list_commits(project_id, branch, cfg.last_days, cfg.last_count)
     gs = _module_lookup(project_id, branch)
@@ -102,4 +108,7 @@ def analyze_branch(project_id: str, branch: str,
     if gs:
         gs.close()
     log.info("analyzed %d commits for %s@%s", n, project_id, branch)
-    return n
+    skipped = [] if shas else [f"分支 {branch} 在回溯窗口内无 commit"]
+    if gs is None and shas:
+        skipped.append("无图谱,模块归属缺失")
+    return JobResult(produced=n, skipped=skipped, note=f"分析 {n} 个 commit")

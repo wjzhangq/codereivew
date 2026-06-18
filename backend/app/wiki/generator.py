@@ -11,13 +11,14 @@ from app.core.logging import get_logger
 from app.db.session import get_conn
 from app.llm import client
 from app.parsing.graph_store import GraphStore
+from app.queue.result import JobResult
 
 log = get_logger("wiki")
 
 _SYSTEM = "你是技术文档作者。基于模块结构与提交理解,生成简洁准确的中文模块文档。"
 
 
-def generate_wiki(project_id: str, branch: str | None = None) -> int:
+def generate_wiki(project_id: str, branch: str | None = None) -> JobResult:
     branch = branch or _default_branch(project_id)
     try:
         gs = GraphStore(project_id, branch)
@@ -25,19 +26,26 @@ def generate_wiki(project_id: str, branch: str | None = None) -> int:
         gs.close()
     except FileNotFoundError:
         log.warning("无图谱,跳过 wiki 生成")
-        return 0
+        return JobResult(produced=0, skipped=[f"分支 {branch} 无图谱(请先索引)"],
+                         note="无法生成 Wiki")
+
+    if not modules:
+        return JobResult(produced=0, skipped=["图谱中无模块"], note="无法生成 Wiki")
 
     n = 0
     # 总览页
     _gen_overview(project_id, modules)
     n += 1
     # 各模块页(仅 fresh 的)
+    refreshed = 0
     for m in modules:
         if _has_new_commits(project_id, m.id):
             _gen_module_page(project_id, m)
             n += 1
+            refreshed += 1
     log.info("wiki generated/refreshed %d pages for %s", n, project_id)
-    return n
+    note = f"Wiki 生成 {n} 页(总览 + {refreshed} 模块)"
+    return JobResult(produced=n, skipped=[], note=note)
 
 
 def _gen_overview(project_id: str, modules) -> None:

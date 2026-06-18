@@ -37,8 +37,14 @@ def _process(job: dict) -> None:
         if is_llm:
             _LLM_SEM.acquire()
         log.info("worker processing J-%d %s", job["id"], job["type"])
-        handler(job)
-        queue.complete(job["id"])
+        result = handler(job)
+        # 零产出一律判失败(用户要求),并写明可定位原因。
+        if result is not None and getattr(result, "produced", 1) == 0:
+            log.warning("job J-%d 零产出: %s", job["id"], result.reason())
+            queue.fail(job["id"], result.reason(), permanent=True)
+        else:
+            detail = result.detail() if result is not None else None
+            queue.complete(job["id"], detail=detail)
     except Exception as e:  # noqa: BLE001
         log.exception("job J-%d failed", job["id"])
         queue.fail(job["id"], str(e))

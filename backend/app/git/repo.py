@@ -59,7 +59,7 @@ def run_git(args: list[str], cwd: Path | None = None, deploy_key: str | None = N
         log.debug("git %s (cwd=%s)", " ".join(args), cwd)
         proc = subprocess.run(
             ["git", *args], cwd=str(cwd) if cwd else None, env=env,
-            capture_output=True, text=True,
+            capture_output=True, text=True, errors="replace",
         )
     if check and proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")

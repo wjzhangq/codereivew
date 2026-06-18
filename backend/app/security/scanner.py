@@ -15,29 +15,50 @@ from app.core.logging import get_logger
 from app.db.session import get_conn
 from app.git.worktree import worktree_path
 from app.llm import client
+from app.queue.result import JobResult
 
 log = get_logger("security.scanner")
 
 
 def scan_branch(project_id: str, branch: str,
-                progress_cb: Callable[[int, str], None] | None = None) -> int:
+                progress_cb: Callable[[int, str], None] | None = None) -> JobResult:
     cfg = get_settings().security
     wt = worktree_path(project_id, branch)
     scan_id = str(uuid.uuid4())[:8]
     findings: list[dict] = []
+    skipped: list[str] = []
+
+    if not wt.exists():
+        return JobResult(produced=0, skipped=[f"分支 {branch} 无 worktree(未索引?)"],
+                         note="无法扫描")
 
     if cfg.gitleaks:
-        findings += _run_gitleaks(wt, project_id)
+        items, ok = _run_gitleaks(wt, project_id)
+        findings += items
+        if not ok:
+            skipped.append("gitleaks 不可用")
         if progress_cb:
-            progress_cb(25, "gitleaks 完成")
+            progress_cb(25, "gitleaks 完成" if ok else "gitleaks 跳过(不可用)")
+    else:
+        skipped.append("gitleaks 未启用")
     if cfg.semgrep:
-        findings += _run_semgrep(wt, project_id)
+        items, ok = _run_semgrep(wt, project_id)
+        findings += items
+        if not ok:
+            skipped.append("semgrep 不可用")
         if progress_cb:
-            progress_cb(50, "semgrep 完成")
+            progress_cb(50, "semgrep 完成" if ok else "semgrep 跳过(不可用)")
+    else:
+        skipped.append("semgrep 未启用")
     if cfg.sca:
-        findings += _run_sca(wt, project_id)
+        items, ok = _run_sca(wt, project_id)
+        findings += items
+        if not ok:
+            skipped.append("osv-scanner 不可用")
         if progress_cb:
-            progress_cb(70, "osv/trivy 完成")
+            progress_cb(70, "osv/trivy 完成" if ok else "osv 跳过(不可用)")
+    else:
+        skipped.append("SCA 未启用")
     if cfg.llm_review:
         findings = _llm_review(findings, project_id, branch)
         if progress_cb:
@@ -47,13 +68,14 @@ def scan_branch(project_id: str, branch: str,
     _reconcile(project_id, branch)
     if progress_cb:
         progress_cb(100, f"扫描完成,{len(findings)} findings")
-    return len(findings)
+    return JobResult(produced=len(findings), skipped=skipped,
+                     note=f"扫描完成,{len(findings)} 条 findings")
 
 
 # --------------------------------------------------------------------------- #
 # 各扫描器
 # --------------------------------------------------------------------------- #
-def _run_gitleaks(wt: Path, project_id: str) -> list[dict]:
+def _run_gitleaks(wt: Path, project_id: str) -> tuple[list[dict], bool]:
     try:
         proc = subprocess.run(
             ["gitleaks", "detect", "-s", str(wt), "--report-format=json", "--exit-code=0"],
@@ -66,13 +88,13 @@ def _run_gitleaks(wt: Path, project_id: str) -> list[dict]:
                  "line": i.get("StartLine", 0),
                  "title": i.get("Description", "密钥泄露"),
                  "evidence": i.get("Secret", "")[:200],
-                 "suggestion": "请吊销并轮换此密钥,并加入 .gitleaksignore。"} for i in items]
+                 "suggestion": "请吊销并轮换此密钥,并加入 .gitleaksignore。"} for i in items], True
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         log.warning("gitleaks 不可用: %s", e)
-        return []
+        return [], False
 
 
-def _run_semgrep(wt: Path, project_id: str) -> list[dict]:
+def _run_semgrep(wt: Path, project_id: str) -> tuple[list[dict], bool]:
     try:
         proc = subprocess.run(
             ["semgrep", "scan", "--json", "--quiet", str(wt)],
@@ -85,13 +107,13 @@ def _run_semgrep(wt: Path, project_id: str) -> list[dict]:
                  "line": r.get("start", {}).get("line", 0),
                  "title": r.get("extra", {}).get("message", "")[:120],
                  "evidence": r.get("extra", {}).get("lines", "")[:200],
-                 "suggestion": r.get("extra", {}).get("fix", "")} for r in data.get("results", [])]
+                 "suggestion": r.get("extra", {}).get("fix", "")} for r in data.get("results", [])], True
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         log.warning("semgrep 不可用: %s", e)
-        return []
+        return [], False
 
 
-def _run_sca(wt: Path, project_id: str) -> list[dict]:
+def _run_sca(wt: Path, project_id: str) -> tuple[list[dict], bool]:
     try:
         proc = subprocess.run(
             ["osv-scanner", "--json", str(wt)],
@@ -109,10 +131,10 @@ def _run_sca(wt: Path, project_id: str) -> list[dict]:
                                  "title": v.get("summary", "")[:120],
                                  "evidence": v.get("id", ""),
                                  "suggestion": "升级受影响依赖。"})
-        return findings
+        return findings, True
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
         log.warning("osv-scanner 不可用: %s", e)
-        return []
+        return [], False
 
 
 def _llm_review(findings: list[dict], project_id: str, branch: str) -> list[dict]:
