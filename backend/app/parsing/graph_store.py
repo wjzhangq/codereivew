@@ -46,12 +46,33 @@ class GraphStore:
             raise FileNotFoundError(f"图谱不存在: {path}")
         self.db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         self.db.row_factory = sqlite3.Row
+        # Detect engine schema (communities/nodes) vs fallback schema (modules).
+        tables = {r[0] for r in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        self._engine_schema = "communities" in tables and "modules" not in tables
 
     def close(self) -> None:
         self.db.close()
 
     # ---------- 模块 / 边 ---------- #
     def modules(self) -> list[Module]:
+        if self._engine_schema:
+            cur = self.db.execute(
+                "SELECT id, name, cohesion, size, description FROM communities WHERE level=0")
+            rows = cur.fetchall()
+            n = max(len(rows), 1)
+            import math
+            result = []
+            for i, r in enumerate(rows):
+                ang = 2 * math.pi * i / n
+                result.append(Module(
+                    id=str(r["id"]), name=r["name"] or f"cluster-{r['id']}",
+                    cat="core", files=0, loc=r["size"] or 0,
+                    x=50 + 32 * math.cos(ang), y=50 + 32 * math.sin(ang),
+                    health=max(0, min(100, int((r["cohesion"] or 0) * 100))),
+                    description=r["description"] or "",
+                ))
+            return result
         cur = self.db.execute("SELECT * FROM modules")
         return [Module(
             id=r["id"], name=r["name"], cat=r["cat"],
@@ -62,6 +83,9 @@ class GraphStore:
         ) for r in cur.fetchall()]
 
     def edges(self) -> list[tuple[str, str]]:
+        if self._engine_schema:
+            # communities don't have explicit cross-edges in this schema
+            return []
         cur = self.db.execute("SELECT src, dst FROM module_edges")
         return [(r["src"], r["dst"]) for r in cur.fetchall()]
 
@@ -71,20 +95,25 @@ class GraphStore:
     # ---------- blast-radius ---------- #
     def blast_radius(self, symbol_or_module: str) -> list[str]:
         """返回直接被影响的符号/模块 id 列表。"""
-        # 引擎原生 blast-radius;fallback 按 module_edges 1-hop
-        try:
+        if self._engine_schema:
+            # 引擎 schema:edges(source_qualified -> target_qualified),双向 1-hop
             cur = self.db.execute(
-                "SELECT dst FROM edges WHERE src=? AND type='depends'",
+                "SELECT target_qualified AS x FROM edges WHERE source_qualified=?",
                 (symbol_or_module,))
-            return [r["dst"] for r in cur.fetchall()]
-        except Exception:
-            cur = self.db.execute(
-                "SELECT dst FROM module_edges WHERE src=?", (symbol_or_module,))
-            ids = [r["dst"] for r in cur.fetchall()]
+            ids = [r["x"] for r in cur.fetchall()]
             cur2 = self.db.execute(
-                "SELECT src FROM module_edges WHERE dst=?", (symbol_or_module,))
-            ids += [r["src"] for r in cur2.fetchall()]
+                "SELECT source_qualified AS x FROM edges WHERE target_qualified=?",
+                (symbol_or_module,))
+            ids += [r["x"] for r in cur2.fetchall()]
             return list(set(ids))
+        # fallback schema:按 module_edges 1-hop
+        cur = self.db.execute(
+            "SELECT dst FROM module_edges WHERE src=?", (symbol_or_module,))
+        ids = [r["dst"] for r in cur.fetchall()]
+        cur2 = self.db.execute(
+            "SELECT src FROM module_edges WHERE dst=?", (symbol_or_module,))
+        ids += [r["src"] for r in cur2.fetchall()]
+        return list(set(ids))
 
     # ---------- 受影响模块(commit 分析用) ---------- #
     def modules_for_files(self, file_paths: list[str]) -> list[str]:
@@ -92,12 +121,28 @@ class GraphStore:
         if not file_paths:
             return []
         ph = ",".join("?" * len(file_paths))
+        if self._engine_schema:
+            cur = self.db.execute(
+                f"SELECT DISTINCT community_id FROM nodes "
+                f"WHERE file_path IN ({ph}) AND community_id IS NOT NULL",
+                file_paths)
+            return [str(r["community_id"]) for r in cur.fetchall()]
         cur = self.db.execute(
             f"SELECT DISTINCT module FROM files WHERE path IN ({ph})", file_paths)
         return [r["module"] for r in cur.fetchall() if r["module"]]
 
     # ---------- 文件列表 ---------- #
     def all_files(self) -> list[dict]:
+        if self._engine_schema:
+            # 引擎 schema 无 files 表;从 nodes 派生(path/module/sha,loc 不可得置 0)
+            cur = self.db.execute(
+                "SELECT file_path, "
+                "MAX(community_id) AS community_id, MAX(file_hash) AS file_hash "
+                "FROM nodes GROUP BY file_path")
+            return [{"path": r["file_path"],
+                     "module": str(r["community_id"]) if r["community_id"] is not None else "",
+                     "loc": 0,
+                     "sha256": r["file_hash"] or ""} for r in cur.fetchall()]
         cur = self.db.execute("SELECT path, module, loc, sha256 FROM files")
         return [dict(r) for r in cur.fetchall()]
 

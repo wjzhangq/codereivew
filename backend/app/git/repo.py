@@ -72,20 +72,30 @@ def bare_path(project_id: str) -> Path:
 
 
 def clone_mirror(git_url: str, project_id: str, deploy_key: str | None) -> Path:
-    """git clone --mirror 建 bare 库(只读)。已存在则 fetch。"""
+    """git clone --bare 建只读裸库,远端分支收到 refs/remotes/origin/* 命名空间。
+
+    不用 --mirror:mirror 会强制 fetch 进 refs/heads/*,与 linked worktree
+    检出的 refs/heads/<branch> 冲突(git refusing to fetch into checked-out branch)。
+    改用 refs/remotes/origin/* 后,worktree 与 fetch 各用各的命名空间,永不冲突。
+    已存在则 fetch。
+    """
     dest = bare_path(project_id)
     if dest.exists():
         fetch(project_id, deploy_key)
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    run_git(["clone", "--mirror", git_url, str(dest)], deploy_key=deploy_key)
-    log.info("cloned mirror %s -> %s", git_url, dest)
+    run_git(["clone", "--bare", git_url, str(dest)], deploy_key=deploy_key)
+    # --bare 默认的 fetch refspec 也写 refs/heads/*;改成 remotes 命名空间。
+    run_git(["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"], cwd=dest)
+    fetch(project_id, deploy_key)
+    log.info("cloned bare %s -> %s", git_url, dest)
     return dest
 
 
 def fetch(project_id: str, deploy_key: str | None) -> None:
     dest = bare_path(project_id)
-    run_git(["fetch", "--prune", "origin", "+refs/heads/*:refs/heads/*"],
+    # 远端分支落 refs/remotes/origin/*,避开被 worktree 检出的 refs/heads/<branch>。
+    run_git(["fetch", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"],
             cwd=dest, deploy_key=deploy_key)
     log.info("fetched %s", project_id)
 
@@ -93,28 +103,33 @@ def fetch(project_id: str, deploy_key: str | None) -> None:
 def default_branch(project_id: str) -> str | None:
     dest = bare_path(project_id)
     try:
-        out = run_git(["symbolic-ref", "--short", "HEAD"], cwd=dest, check=False).strip()
+        # 远端 HEAD 指向的默认分支(origin/HEAD -> origin/<branch>)。
+        out = run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                      cwd=dest, check=False).strip()
         if out:
-            return out
-        # 回落:remote show 不可用于 bare,改取 refs
-        out = run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=dest, check=False).strip()
+            return out.removeprefix("origin/")
+        # 回落:bare 自身 HEAD。
+        out = run_git(["symbolic-ref", "--short", "HEAD"], cwd=dest, check=False).strip()
         return out or None
     except RuntimeError:
         return None
 
 
 def list_remote_branches(project_id: str) -> list[BranchInfo]:
-    """git for-each-ref 列出所有分支及末次 commit 信息。"""
+    """git for-each-ref 列出所有远端分支及末次 commit 信息。"""
     dest = bare_path(project_id)
     fmt = "%(refname:short)%09%(objectname:short)%09%(contents:subject)%09%(authorname)%09%(committerdate:iso8601)"
-    out = run_git(["for-each-ref", f"--format={fmt}", "refs/heads/"], cwd=dest)
+    out = run_git(["for-each-ref", f"--format={fmt}", "refs/remotes/origin/"], cwd=dest)
     branches: list[BranchInfo] = []
     for line in out.splitlines():
         parts = line.split("\t")
         if len(parts) < 5:
             continue
+        name = parts[0].removeprefix("origin/")
+        if name in ("HEAD", "origin", ""):  # origin/HEAD 符号引用,非真实分支
+            continue
         branches.append(BranchInfo(
-            name=parts[0], sha=parts[1], subject=parts[2],
+            name=name, sha=parts[1], subject=parts[2],
             author=parts[3], committed_at=parts[4],
         ))
     return branches

@@ -73,8 +73,10 @@ cp ../config/config.example.yaml ../config/config.yaml
 export JWT_SECRET="$(openssl rand -hex 32)"
 
 uvicorn app.main:app --reload --port 8080   # 自动建表 + 引导 admin
+uv run uvicorn app.main:app --reload --port 8080
 # 另开终端:
 python -m app.queue.worker                   # 启动 worker 池
+uv run -m app.queue.worker
 
 # 前端
 cd ../frontend

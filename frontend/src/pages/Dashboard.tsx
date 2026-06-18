@@ -4,14 +4,13 @@ import {
   Button,
   Card,
   Col,
+  Alert,
   Input,
   Modal,
   Form,
   Row,
-  Select,
   Statistic,
   Tag,
-  Segmented,
   message,
 } from 'antd'
 import {
@@ -143,17 +142,40 @@ function ProjectCard({ p, onOpen }: { p: any; onOpen: (id: string) => void }) {
   )
 }
 
+function detectPlatform(url: string): string {
+  if (/gitlab/i.test(url)) return 'GitLab'
+  return 'GitHub'
+}
+
 function AddRepoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [tab, setTab] = useState<string>('manual')
   const [form] = Form.useForm()
   const createProject = useCreateProject()
+  const { data: projects = [] } = useProjects()
+  const [duplicateError, setDuplicateError] = useState<string | null>(null)
+  const [detectedPlatform, setDetectedPlatform] = useState<string>('')
+
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const url = e.target.value.trim()
+    setDetectedPlatform(url ? detectPlatform(url) : '')
+    const existing = (projects as any[]).find(
+      (p) => p.git_url === url || p.repoUrl === url || p.gitUrl === url
+    )
+    if (existing) {
+      setDuplicateError(`该仓库已由「${existing.name}」接入，如需访问请联系项目创建者申请权限。`)
+    } else {
+      setDuplicateError(null)
+    }
+  }
 
   const submit = async () => {
+    if (duplicateError) return
     try {
       const values = await form.validateFields()
       await createProject.mutateAsync(values)
       message.success('已接入并开始索引')
       form.resetFields()
+      setDuplicateError(null)
+      setDetectedPlatform('')
       onClose()
     } catch (e: any) {
       if (e?.errorFields) return
@@ -161,80 +183,77 @@ function AddRepoModal({ open, onClose }: { open: boolean; onClose: () => void })
     }
   }
 
+  const handleCancel = () => {
+    form.resetFields()
+    setDuplicateError(null)
+    setDetectedPlatform('')
+    onClose()
+  }
+
   return (
     <Modal
       title="接入仓库"
       open={open}
-      onCancel={onClose}
-      width={560}
+      onCancel={handleCancel}
+      width={520}
       onOk={submit}
       okText="接入并开始索引"
+      okButtonProps={{ disabled: !!duplicateError }}
       cancelText="取消"
       confirmLoading={createProject.isPending}
+      destroyOnClose
     >
-      <div style={{ margin: '8px 0 18px' }}>
-        <Segmented
-          value={tab}
-          onChange={(v) => setTab(v as string)}
-          options={[
-            { value: 'manual', label: '手动填写地址' },
-            { value: 'discover', label: '从平台发现' },
-          ]}
-        />
-      </div>
-      {tab === 'manual' ? (
-        <Form form={form} layout="vertical">
-          <Form.Item label="项目名" name="name" rules={[{ required: true }]}>
-            <Input placeholder="memory-lancedb-pro" />
-          </Form.Item>
-          <Form.Item label="仓库地址" name="git_url" rules={[{ required: true }]}>
-            <Input placeholder="git@github.com:org/repo.git" />
-          </Form.Item>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="组织" name="org">
-                <Input placeholder="CortexReach" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="平台" name="platform" initialValue="github">
-                <Select
-                  options={[
-                    { value: 'github', label: 'GitHub' },
-                    { value: 'gitlab', label: 'GitLab' },
-                  ]}
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item label="Deploy Key(只读,用于 clone)" name="deploy_key">
-            <Input.TextArea
-              rows={3}
-              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-              style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
-            />
-          </Form.Item>
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              padding: 12,
-              background: 'var(--fill-quaternary)',
-              borderRadius: 8,
-            }}
-          >
-            <InfoCircleOutlined style={{ color: 'var(--text-3)', marginTop: 2 }} />
-            <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-              默认分支将强制纳入并自动分析,其余分支可在项目详情页勾选。
-            </span>
-          </div>
-        </Form>
-      ) : (
-        <div style={{ textAlign: 'center', padding: '32px 20px', color: 'var(--text-3)' }}>
-          <GithubOutlined style={{ fontSize: 36, marginBottom: 12 }} />
-          <div>已配置平台 token 后,可列出组织下的仓库供快速勾选。</div>
+      <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
+        <Form.Item
+          label="仓库地址"
+          name="git_url"
+          rules={[{ required: true, message: '请输入仓库地址' }]}
+          extra={detectedPlatform ? `已识别平台：${detectedPlatform}` : undefined}
+        >
+          <Input
+            placeholder="https://github.com/org/repo  或  git@github.com:org/repo.git"
+            onChange={handleUrlChange}
+            autoFocus
+          />
+        </Form.Item>
+        {duplicateError && (
+          <Alert
+            type="warning"
+            showIcon
+            message={duplicateError}
+            style={{ marginBottom: 16 }}
+          />
+        )}
+        <Form.Item
+          label="项目名称"
+          name="name"
+          rules={[{ required: true, message: '请输入项目名称' }]}
+          extra="可随时修改，不影响仓库关联"
+        >
+          <Input placeholder="my-project" />
+        </Form.Item>
+        <Form.Item label="Deploy Key（只读，用于 clone 私有仓库）" name="deploy_key">
+          <Input.TextArea
+            rows={3}
+            placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+            style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
+          />
+        </Form.Item>
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            padding: 12,
+            background: 'var(--fill-quaternary)',
+            borderRadius: 8,
+          }}
+        >
+          <InfoCircleOutlined style={{ color: 'var(--text-3)', marginTop: 2 }} />
+          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
+            默认分支将强制纳入并自动分析，其余分支可在项目详情页勾选。
+          </span>
         </div>
-      )}
+      </Form>
     </Modal>
   )
 }

@@ -17,6 +17,7 @@ dependencies = [
     "pyjwt>=2.8",
     "python-multipart>=0.0.9",
     "cryptography>=42.0",
+    "code-review-graph>=2.3.6",
 ]
 
 [project.optional-dependencies]

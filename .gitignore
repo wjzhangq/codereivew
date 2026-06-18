@@ -6,3 +6,8 @@ backend/storage/repos/http-test/bare/objects
 backend/storage/repos/pt/bare/objects
 frontend/dist
 frontend/node_modules
+.gitnexus
+
+# 含明文密钥的本地配置(切勿提交);保留 config.example.yaml 作模板
+config/config.yaml
+.claude

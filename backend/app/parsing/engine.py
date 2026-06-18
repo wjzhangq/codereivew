@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -20,11 +21,11 @@ from app.git.worktree import worktree_path
 
 log = get_logger("parsing.engine")
 
-try:  # 引擎就位后启用
-    import code_review_graph as _crg  # type: ignore
+try:
+    from code_review_graph.tools.build import build_or_update_graph as _crg_build  # type: ignore
     _ENGINE_AVAILABLE = True
 except Exception:  # noqa: BLE001
-    _crg = None
+    _crg_build = None  # type: ignore
     _ENGINE_AVAILABLE = False
 
 
@@ -41,10 +42,12 @@ def build_graph(project_id: str, branch: str) -> Path:
     wt = worktree_path(project_id, branch)
     out = graph_db_path(project_id, branch)
     if _ENGINE_AVAILABLE:
-        # ⚠️ 真实调用签名以 spike 笔记为准,例如:
-        #   _crg.analyze(repo_path=str(wt), out_db=str(out), embeddings=False)
         log.info("running code-review-graph on %s@%s", project_id, branch)
-        _crg.analyze(repo_path=str(wt), out_db=str(out), embeddings=False)  # type: ignore
+        # 引擎固定输出到 <repo_root>/.code-review-graph/graph.db，不支持自定义路径
+        _crg_build(repo_root=str(wt), full_rebuild=True, postprocess="minimal")  # type: ignore
+        crg_db = wt / ".code-review-graph" / "graph.db"
+        shutil.copy2(crg_db, out)
+        log.info("graph copied to %s", out)
     else:
         log.warning("code-review-graph 未安装,使用内置最小解析(M0 回落)")
         _fallback_build(wt, out)

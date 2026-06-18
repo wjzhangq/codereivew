@@ -26,8 +26,9 @@ def add_worktree(project_id: str, branch: str) -> Path:
     残留的无效目录(上次失败遗留)先清理再重建。"""
     bare = bare_path(project_id)
     wt = worktree_path(project_id, branch).resolve()
+    ref = f"refs/remotes/origin/{branch}"  # 远端分支命名空间(避开 refs/heads 与 fetch 冲突)
     if wt.exists() and _is_valid_worktree(wt):
-        run_git(["reset", "--hard", f"refs/heads/{branch}"], cwd=wt, check=False)
+        run_git(["reset", "--hard", ref], cwd=wt, check=False)
         return wt
     if wt.exists():
         # 残留无效目录:先从 git 注销再物理删除
@@ -36,7 +37,8 @@ def add_worktree(project_id: str, branch: str) -> Path:
         import shutil
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    run_git(["worktree", "add", "--force", str(wt), branch], cwd=bare)
+    # --detach:基于远端 ref 检出但不占用任何 refs/heads/<branch>,worktree 间互不冲突
+    run_git(["worktree", "add", "--force", "--detach", str(wt), ref], cwd=bare)
     log.info("worktree add %s@%s -> %s", project_id, branch, wt)
     return wt
 

@@ -124,10 +124,17 @@ class ProviderCfg(BaseModel):
     type: str = "openai_compatible"
     base_url: str
     api_key_env: str | None = None
+    api_key_value: str | None = None  # 明文密钥(可选);优先级高于 api_key_env
 
     @property
     def api_key(self) -> str | None:
-        return os.getenv(self.api_key_env) if self.api_key_env else None
+        # 1) 明文优先:config 直接写 api_key_value
+        if self.api_key_value:
+            return self.api_key_value
+        # 2) 间接引用:api_key_env 是环境变量名
+        if self.api_key_env:
+            return os.getenv(self.api_key_env)
+        return None
 
 
 class ModelRef(BaseModel):
