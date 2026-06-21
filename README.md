@@ -115,6 +115,36 @@ kubectl apply -f deploy/k8s/codereview.yaml
 
 ---
 
+## 运维 CLI(`cr`)
+
+后端内置一个命令行工具,用于**验证环境**、**查看项目状态**、**强制重建索引**。安装后即可用 `cr <命令>`(或不安装直接 `python -m app.cli <命令>`)。
+
+```bash
+cd backend
+uv pip install -e .          # 注册 `cr` 入口(或 pip install -e .)
+# 未安装也可:python -m app.cli <命令>
+```
+
+| 命令 | 作用 |
+|---|---|
+| `cr doctor` | 综合体检:配置加载 · 存储目录可写 · meta.sqlite 读写 · 图谱引擎 · LLM Chat · Embedding(逐项 ✓/✗) |
+| `cr check-llm` | **真实**发一次 chat + embedding 请求,验证 provider 连通(非占位 stub / hash 伪向量回落),并校验向量维度 |
+| `cr check-graph` | 在临时 git 仓库上**真实**跑 code-review-graph 构建一次,验证引擎可产出图谱 |
+| `cr projects` | 列出所有项目(id / name / status / files / loc / 最后索引时间) |
+| `cr status <project_id>` | 单个项目详情 + 分支白名单/索引状态 + 最近 10 条 job(含失败原因) |
+| `cr reindex <project_id>` | **前台同步**强制全量重建索引(clone→worktree→图谱→向量),进度实时打印到终端 |
+
+```bash
+cr doctor                          # 部署后第一件事:确认环境就绪
+cr check-llm                       # 单独排查 LLM / embedding 是否连通
+cr status memory-lancedb-pro-skill # 查看某项目分支与任务状态
+cr reindex memory-lancedb-pro-skill# 图谱/向量异常时强制重建
+```
+
+> `doctor` 仅当**配置 / 存储 / 数据库**任一失败才返回非零退出码;图谱引擎或 LLM 处于降级回落时只告警(`!`),便于在无外部依赖的开发环境照常使用。
+
+---
+
 ## 目录结构
 
 ```
@@ -124,6 +154,7 @@ code-review/
 │   ├── pyproject.toml
 │   └── app/
 │       ├── main.py                   # FastAPI 入口
+│       ├── cli.py                    # 运维 CLI(doctor/check-llm/check-graph/projects/status/reindex)
 │       ├── api/                      # 10 routers (auth/projects/analysis/security/qa/wiki/jobs/users/webhook/settings)
 │       ├── core/                     # config(pydantic-settings) / security(JWT/argon2/加密) / logging(审计)
 │       ├── auth/                     # users(账号) / keys(API Key) / identity(平台身份解析)

@@ -1,5 +1,6 @@
 pyproject.toml
 app/__init__.py
+app/cli.py
 app/main.py
 app/analysis/__init__.py
 app/analysis/commit_analyzer.py
@@ -47,6 +48,7 @@ app/qa/retriever.py
 app/queue/__init__.py
 app/queue/handlers.py
 app/queue/queue.py
+app/queue/result.py
 app/queue/worker.py
 app/security/__init__.py
 app/security/scanner.py
@@ -60,5 +62,6 @@ app/wiki/generator.py
 code_review_backend.egg-info/PKG-INFO
 code_review_backend.egg-info/SOURCES.txt
 code_review_backend.egg-info/dependency_links.txt
+code_review_backend.egg-info/entry_points.txt
 code_review_backend.egg-info/requires.txt
 code_review_backend.egg-info/top_level.txt

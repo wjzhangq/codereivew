@@ -20,6 +20,9 @@ dependencies = [
     "code-review-graph>=2.3.6",
 ]
 
+[project.scripts]
+cr = "app.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

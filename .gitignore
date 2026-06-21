@@ -1,13 +1,51 @@
-code-review/backend/.venv
-__pycache__
-backend/.venv
-backend/storage/repos/cd/bare/objects
-backend/storage/repos/http-test/bare/objects
-backend/storage/repos/pt/bare/objects
-frontend/dist
-frontend/node_modules
-.gitnexus
+# ===========================================================================
+# CodeReview 平台 — Git 忽略规则
+# ===========================================================================
 
-# 含明文密钥的本地配置(切勿提交);保留 config.example.yaml 作模板
+# --- 运行时数据(storage 持久卷:仓库镜像 / 图谱 / 向量 / 报告 / OLAP) ---
+storage/
+backend/storage/
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
+**/*.sqlite.bak
+
+# --- 含明文密钥的本地配置(切勿提交;保留 config.example.yaml 作模板) ---
 config/config.yaml
-.claude
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg
+
+# --- Node / 前端 ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# --- 工具 / 索引(本地代码情报缓存) ---
+.gitnexus/
+.code-review-graph/
+.codegraph/
+
+# --- 编辑器 / 系统 ---
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+*.log
