@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 from app.core.logging import get_logger
-from app.db.session import get_conn
+from app.db.session import get_conn_ro
 from app.llm import client
 from app.llm.embedder import embed_one
 from app.parsing.vectors import VectorStore
@@ -58,7 +58,7 @@ def answer(project_id: str, question: str, branch: str | None = None) -> dict:
 
 def _related_commits(project_id: str, question: str) -> list[dict]:
     """简易关键词召回演进史(可换成对 summary 的向量召回)。"""
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         terms = [t for t in question.split() if len(t) > 2][:5]
         like = " OR ".join("summary LIKE ?" for _ in terms) or "1=1"
@@ -75,7 +75,7 @@ def _related_commits(project_id: str, question: str) -> list[dict]:
 
 
 def _default_branch(project_id: str) -> str:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         r = conn.execute("SELECT default_branch FROM projects WHERE id=?",
                         (project_id,)).fetchone()

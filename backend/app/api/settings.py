@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from app.api.deps import current_user, require_admin
 from app.api.projects import _check_access
 from app.auth import keys
-from app.db.session import get_conn
+from app.db.session import get_conn_ro, tx
 
 router = APIRouter(prefix="/api/projects", tags=["settings"])
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/projects", tags=["settings"])
 @router.get("/{pid}/settings")
 def get_settings_(pid: str, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         p = conn.execute("SELECT git_url, default_branch, platform FROM projects WHERE id=?",
                        (pid,)).fetchone()
@@ -43,8 +43,7 @@ class WebhookReq(BaseModel):
 @router.put("/{pid}/settings/webhook")
 def set_webhook(pid: str, req: WebhookReq, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("""
             INSERT INTO project_settings(project_id,webhook_secret,webhook_enabled)
             VALUES (?,?,?)
@@ -52,9 +51,6 @@ def set_webhook(pid: str, req: WebhookReq, user: dict = Depends(current_user)):
                 webhook_secret=COALESCE(excluded.webhook_secret, project_settings.webhook_secret),
                 webhook_enabled=excluded.webhook_enabled
         """, (pid, req.secret, int(req.enabled)))
-        conn.commit()
-    finally:
-        conn.close()
     return {"ok": True}
 
 
@@ -65,15 +61,11 @@ class AnalysisReq(BaseModel):
 @router.put("/{pid}/settings/analysis")
 def set_analysis(pid: str, req: AnalysisReq, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("""
             INSERT INTO project_settings(project_id,settings_json) VALUES (?,?)
             ON CONFLICT(project_id) DO UPDATE SET settings_json=excluded.settings_json
         """, (pid, json.dumps(req.settings)))
-        conn.commit()
-    finally:
-        conn.close()
     return {"ok": True}
 
 

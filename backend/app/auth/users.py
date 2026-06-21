@@ -10,7 +10,7 @@ import uuid
 from app.core.config import get_settings
 from app.core.logging import audit, get_logger
 from app.core.security import hash_password, verify_password
-from app.db.session import get_conn
+from app.db.session import get_conn_ro, tx
 
 log = get_logger("auth.users")
 
@@ -19,8 +19,7 @@ def bootstrap_admin() -> None:
     """首启从 config 引导创建 admin(幂等)。"""
     s = get_settings()
     admin = s.auth.admin
-    conn = get_conn()
-    try:
+    with tx() as conn:
         existing = conn.execute("SELECT id FROM users WHERE username=?",
                                (admin.username,)).fetchone()
         if existing:
@@ -34,69 +33,50 @@ def bootstrap_admin() -> None:
         conn.execute(
             "INSERT INTO users(id,username,name,password_hash,role) VALUES (?,?,?,?,?)",
             (str(uuid.uuid4())[:8], admin.username, "系统管理员", pwd_hash, "admin"))
-        conn.commit()
-        log.info("bootstrapped admin user: %s", admin.username)
-    finally:
-        conn.close()
+    log.info("bootstrapped admin user: %s", admin.username)
 
 
 def authenticate(username: str, password: str) -> dict | None:
-    conn = get_conn()
-    try:
+    with tx() as conn:
         row = conn.execute("SELECT * FROM users WHERE username=? AND disabled=0",
                           (username,)).fetchone()
         if not row or not verify_password(password, row["password_hash"]):
             return None
         conn.execute("UPDATE users SET last_login=datetime('now') WHERE id=?", (row["id"],))
-        conn.commit()
         return {"id": row["id"], "username": row["username"], "name": row["name"],
                 "role": row["role"]}
-    finally:
-        conn.close()
 
 
 def create_user(username: str, password: str, name: str, role: str,
                 projects: list[str] | None = None) -> dict:
     uid = str(uuid.uuid4())[:8]
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("INSERT INTO users(id,username,name,password_hash,role) VALUES (?,?,?,?,?)",
                      (uid, username, name, hash_password(password), role))
         for pid in (projects or []):
             conn.execute("INSERT OR IGNORE INTO project_access(user_id,project_id) VALUES (?,?)",
                          (uid, pid))
-        conn.commit()
-        audit("create_user", username=username, role=role)
-        return {"id": uid, "username": username, "name": name, "role": role}
-    finally:
-        conn.close()
+    audit("create_user", username=username, role=role)
+    return {"id": uid, "username": username, "name": name, "role": role}
 
 
 def set_disabled(user_id: str, disabled: bool) -> None:
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("UPDATE users SET disabled=? WHERE id=?", (int(disabled), user_id))
-        conn.commit()
-        audit("set_user_disabled", user=user_id, disabled=disabled)
-    finally:
-        conn.close()
+    audit("set_user_disabled", user=user_id, disabled=disabled)
 
 
 def set_access(user_id: str, project_ids: list[str]) -> None:
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("DELETE FROM project_access WHERE user_id=?", (user_id,))
         for pid in project_ids:
             conn.execute("INSERT OR IGNORE INTO project_access(user_id,project_id) VALUES (?,?)",
                          (user_id, pid))
-        conn.commit()
-        audit("set_access", user=user_id, projects=len(project_ids))
-    finally:
-        conn.close()
+    audit("set_access", user=user_id, projects=len(project_ids))
 
 
 def list_users() -> list[dict]:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         users = [dict(r) for r in conn.execute("SELECT * FROM users").fetchall()]
         for u in users:
@@ -116,7 +96,7 @@ def list_users() -> list[dict]:
 def user_can_access(user: dict, project_id: str) -> bool:
     if user.get("role") == "admin":
         return True
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         row = conn.execute("SELECT 1 FROM project_access WHERE user_id=? AND project_id=?",
                           (user["id"], project_id)).fetchone()

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from app.api.deps import current_user
 from app.api.projects import _check_access, _default_branch
-from app.db.session import get_conn
+from app.db.session import get_conn_ro, tx
 from app.queue import queue
 
 router = APIRouter(prefix="/api/projects", tags=["security"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/projects", tags=["security"])
 @router.get("/{pid}/findings")
 def get_findings(pid: str, status: str | None = None, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         if status and status != "all":
             cur = conn.execute("SELECT * FROM findings WHERE project_id=? AND status=? "
@@ -50,11 +50,7 @@ class StatusReq(BaseModel):
 @router.patch("/{pid}/findings/{fid}")
 def update_finding(pid: str, fid: str, req: StatusReq, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("UPDATE findings SET status=? WHERE id=? AND project_id=?",
                      (req.status, fid, pid))
-        conn.commit()
-    finally:
-        conn.close()
     return {"ok": True}

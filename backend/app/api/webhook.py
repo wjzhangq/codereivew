@@ -7,7 +7,7 @@ import hmac
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.core.logging import get_logger
-from app.db.session import get_conn
+from app.db.session import get_conn_ro
 from app.queue import queue
 
 router = APIRouter(prefix="/api/webhook", tags=["webhook"])
@@ -61,7 +61,7 @@ async def webhook(provider: str, request: Request,
 
 
 def _find_project(repo_url: str) -> dict | None:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         rows = conn.execute("SELECT id, git_url FROM projects").fetchall()
         for r in rows:
@@ -77,7 +77,7 @@ def _normalize(url: str) -> str:
 
 
 def _webhook_secret(pid: str) -> str | None:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         r = conn.execute("SELECT webhook_secret FROM project_settings WHERE project_id=?",
                        (pid,)).fetchone()
@@ -87,7 +87,7 @@ def _webhook_secret(pid: str) -> str | None:
 
 
 def _is_whitelisted(pid: str, branch: str) -> bool:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         r = conn.execute("SELECT whitelisted FROM branches WHERE project_id=? AND name=?",
                        (pid, branch)).fetchone()

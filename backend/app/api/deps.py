@@ -5,11 +5,11 @@ from fastapi import Depends, Header, HTTPException
 
 from app.auth import keys
 from app.core.security import decode_token
-from app.db.session import get_conn
+from app.db.session import get_conn_ro
 
 
 def _user_by_id(uid: str) -> dict | None:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         row = conn.execute("SELECT id,username,name,role,disabled FROM users WHERE id=?",
                           (uid,)).fetchone()

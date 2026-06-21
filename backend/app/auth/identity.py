@@ -11,7 +11,7 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.db.session import get_conn
+from app.db.session import get_conn_ro, tx
 
 log = get_logger("auth.identity")
 
@@ -19,7 +19,7 @@ log = get_logger("auth.identity")
 def resolve_project_identities(project_id: str) -> int:
     """对项目最近 commits 解析平台账号,建/更新 identities 映射。"""
     s = get_settings()
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         p = conn.execute("SELECT platform, org, name, git_url FROM projects WHERE id=?",
                         (project_id,)).fetchone()
@@ -42,8 +42,7 @@ def resolve_project_identities(project_id: str) -> int:
         mappings = []
 
     n = 0
-    conn = get_conn()
-    try:
+    with tx() as conn:
         for m in mappings:
             conn.execute("""
                 INSERT INTO identities(project_id,platform,platform_user_id,username,name,
@@ -55,9 +54,6 @@ def resolve_project_identities(project_id: str) -> int:
             """, (project_id, platform, m["platform_user_id"], m["username"],
                   m["name"], json.dumps(m["emails"])))
             n += 1
-        conn.commit()
-    finally:
-        conn.close()
     log.info("resolved %d identities for %s", n, project_id)
     return n
 
@@ -116,7 +112,7 @@ def _gitlab_commits(cfg, slug: str) -> list[dict]:
 
 
 def list_identities(project_id: str) -> list[dict]:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         cur = conn.execute("SELECT * FROM identities WHERE project_id=? AND merged_into IS NULL",
                           (project_id,))
@@ -132,10 +128,6 @@ def list_identities(project_id: str) -> list[dict]:
 
 
 def merge_identities(project_id: str, source_id: int, target_id: int) -> None:
-    conn = get_conn()
-    try:
+    with tx() as conn:
         conn.execute("UPDATE identities SET merged_into=? WHERE id=? AND project_id=?",
                      (target_id, source_id, project_id))
-        conn.commit()
-    finally:
-        conn.close()

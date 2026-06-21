@@ -10,7 +10,7 @@ from app.api.deps import current_user
 from app.auth.users import user_can_access
 from app.core.logging import audit
 from app.core.security import encrypt_secret
-from app.db.session import get_conn
+from app.db.session import get_conn_ro, tx
 from app.queue import queue
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -31,7 +31,7 @@ def _slug(name: str) -> str:
 
 @router.get("")
 def list_projects(user: dict = Depends(current_user)):
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         rows = [dict(r) for r in conn.execute("SELECT * FROM projects ORDER BY created_at DESC")]
     finally:
@@ -46,8 +46,7 @@ def create_project(req: CreateProjectReq, user: dict = Depends(current_user)):
     if user.get("role") not in ("admin", "machine"):
         raise HTTPException(403, "仅管理员可接入仓库")
     pid = _slug(req.name)
-    conn = get_conn()
-    try:
+    with tx() as conn:
         if conn.execute("SELECT 1 FROM projects WHERE id=?", (pid,)).fetchone():
             raise HTTPException(409, "项目已存在")
         conn.execute("""
@@ -55,9 +54,6 @@ def create_project(req: CreateProjectReq, user: dict = Depends(current_user)):
             VALUES (?,?,?,?,?,?,?,'pending')
         """, (pid, req.name, req.org, req.git_url, req.platform,
               encrypt_secret(req.deploy_key) if req.deploy_key else None, req.description))
-        conn.commit()
-    finally:
-        conn.close()
     audit("create_project", project=pid, url=req.git_url)
     jid = queue.enqueue("index_build", pid, priority=queue.PRIORITY_BACKFILL,
                         detail="首次克隆 + 全量索引")
@@ -67,7 +63,7 @@ def create_project(req: CreateProjectReq, user: dict = Depends(current_user)):
 @router.get("/{pid}")
 def get_project(pid: str, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
         if not row:
@@ -91,7 +87,7 @@ def get_project(pid: str, user: dict = Depends(current_user)):
 @router.get("/{pid}/branches")
 def get_branches(pid: str, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         rows = conn.execute("SELECT * FROM branches WHERE project_id=? ORDER BY is_default DESC, name",
                           (pid,)).fetchall()
@@ -113,8 +109,7 @@ class WhitelistReq(BaseModel):
 @router.put("/{pid}/branches/{name}/whitelist")
 def set_whitelist(pid: str, name: str, req: WhitelistReq, user: dict = Depends(current_user)):
     _check_access(user, pid)
-    conn = get_conn()
-    try:
+    with tx() as conn:
         row = conn.execute("SELECT is_default FROM branches WHERE project_id=? AND name=?",
                           (pid, name)).fetchone()
         if not row:
@@ -123,9 +118,6 @@ def set_whitelist(pid: str, name: str, req: WhitelistReq, user: dict = Depends(c
             raise HTTPException(409, "默认分支强制纳入,不可取消")
         conn.execute("UPDATE branches SET whitelisted=? WHERE project_id=? AND name=?",
                      (int(req.whitelisted), pid, name))
-        conn.commit()
-    finally:
-        conn.close()
     if req.whitelisted:
         queue.enqueue("index_incremental", pid, branch=name,
                       priority=queue.PRIORITY_MANUAL, detail=f"索引新纳入分支 {name}")
@@ -182,7 +174,7 @@ def _project_card(r: dict) -> dict:
 
 
 def _findings_by_module(pid: str) -> dict[str, int]:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         rows = conn.execute(
             "SELECT module, COUNT(*) AS n FROM findings WHERE project_id=? AND status='new' "
@@ -193,7 +185,7 @@ def _findings_by_module(pid: str) -> dict[str, int]:
 
 
 def _default_branch(pid: str) -> str:
-    conn = get_conn()
+    conn = get_conn_ro()
     try:
         r = conn.execute("SELECT default_branch FROM projects WHERE id=?", (pid,)).fetchone()
         return (r["default_branch"] if r else None) or "main"
