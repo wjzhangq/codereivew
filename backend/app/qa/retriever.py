@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from app.core.logging import get_logger
 from app.db.session import get_conn_ro
@@ -19,6 +20,93 @@ _SYSTEM = (
     "你是项目代码专家。基于提供的代码片段(图谱+向量召回)与提交演进史回答问题。"
     "说明当前实现,并指出历史上出现过的不同思路。支持 **加粗**。"
 )
+
+_SUGGEST_SYSTEM = (
+    "你是项目代码专家。根据提供的提交演进史(每条含改动概述/解决的问题/采用的思路/涉及模块),"
+    "生成 4-6 条用户最可能想问的、贴合本项目实际改动的问题。"
+    "每条问题不超过 40 字,面向'为什么这样改 / 如何实现 / 演进过程',避免空泛套话。"
+    '只返回 JSON:{"questions": ["...", "..."]}。'
+)
+
+# 通用兜底问题:无 commit 数据 / LLM 不可用时返回,保证前端永远有内容。
+_FALLBACK_QUESTIONS = [
+    "项目整体架构是怎样的?有哪些核心模块?",
+    "最近的改动主要集中在哪些模块?",
+    "项目里有哪些关键的设计决策和取舍?",
+    "核心功能的实现思路是怎样的?",
+]
+
+# 模块级内存缓存:{(project_id, branch): (questions, ts)},TTL 600s。
+_SUGGEST_CACHE: dict[tuple[str, str], tuple[list[str], float]] = {}
+_SUGGEST_TTL = 600.0
+
+
+def suggest_questions(project_id: str, branch: str | None = None) -> dict:
+    """基于提交演进史用 LLM 生成项目相关的建议问答,带内存缓存与兜底。"""
+    branch = branch or _default_branch(project_id)
+    key = (project_id, branch)
+    now = time.time()
+
+    cached = _SUGGEST_CACHE.get(key)
+    if cached and now - cached[1] < _SUGGEST_TTL:
+        return {"questions": cached[0], "cached": True}
+
+    commits = _recent_commits_for_suggest(project_id, branch)
+    if not commits:
+        return {"questions": _FALLBACK_QUESTIONS, "cached": False}
+
+    # 聚合模块(去重,保留出现顺序)
+    modules: list[str] = []
+    for c in commits:
+        for m in c.get("modules") or []:
+            if m and m not in modules:
+                modules.append(m)
+
+    ctx = "\n".join(
+        f"- [{c['sha']}] {c.get('summary') or ''}"
+        + (f" | 问题: {c['problem']}" if c.get("problem") else "")
+        + (f" | 思路: {c['approach']}" if c.get("approach") else "")
+        for c in commits[:15])
+    mod_line = ("、".join(modules[:10])) if modules else "(未知)"
+    prompt = (f"涉及模块:{mod_line}\n\n提交演进史:\n{ctx}\n\n"
+              f"请据此生成建议问题。")
+
+    try:
+        data = client.chat_json("qa_suggest", _SUGGEST_SYSTEM, prompt, max_tokens=600)
+        questions = [q.strip() for q in (data.get("questions") or []) if isinstance(q, str) and q.strip()]
+    except Exception as e:  # noqa: BLE001
+        log.warning("生成建议问答失败,使用兜底: %s", e)
+        questions = []
+
+    if not questions:
+        return {"questions": _FALLBACK_QUESTIONS, "cached": False}
+
+    questions = questions[:6]
+    _SUGGEST_CACHE[key] = (questions, now)
+    return {"questions": questions, "cached": False}
+
+
+def _recent_commits_for_suggest(project_id: str, branch: str) -> list[dict]:
+    """取最近的 commit_analysis 记录用于生成建议问题。"""
+    conn = get_conn_ro()
+    try:
+        cur = conn.execute(
+            "SELECT commit_sha, summary, problem, approach, modules "
+            "FROM commit_analysis WHERE project_id=? "
+            "ORDER BY committed_at DESC LIMIT 20",
+            (project_id,))
+        out = []
+        for r in cur.fetchall():
+            try:
+                mods = json.loads(r["modules"]) if r["modules"] else []
+            except (json.JSONDecodeError, TypeError):
+                mods = []
+            out.append({"sha": r["commit_sha"][:7], "summary": r["summary"],
+                        "problem": r["problem"], "approach": r["approach"],
+                        "modules": mods if isinstance(mods, list) else []})
+        return out
+    finally:
+        conn.close()
 
 
 def answer(project_id: str, question: str, branch: str | None = None) -> dict:

@@ -33,6 +33,13 @@ export const useUpdateFinding = (id: string) => {
 
 export const useAsk = (id: string) => useMutation({ mutationFn: (question: string) => post<any>(`/api/projects/${id}/qa`, { question }) })
 
+export const useQASuggestions = (id: string) => useQuery({
+  queryKey: ['qaSuggestions', id],
+  queryFn: () => getOne<{ questions: string[] }>(`/api/projects/${id}/qa/suggestions`),
+  enabled: !!id,
+  staleTime: 10 * 60 * 1000,
+})
+
 export const useWikiList = (id: string) => useQuery({ queryKey: ['wikiList', id], queryFn: () => getList<any>(`/api/projects/${id}/wiki`), enabled: !!id })
 export const useWikiPage = (id: string, page: string) => useQuery({ queryKey: ['wiki', id, page], queryFn: () => getOne<any>(`/api/projects/${id}/wiki/${page}`), enabled: !!id && !!page })
 export const useRefreshWiki = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/wiki/refresh`) })

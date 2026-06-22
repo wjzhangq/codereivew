@@ -2,14 +2,15 @@ import { useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button, Card, Input, Space, Spin, Tag } from 'antd'
 import { SendOutlined, StarOutlined } from '@ant-design/icons'
-import { useAsk } from '../hooks/api'
+import { useAsk, useQASuggestions } from '../hooks/api'
 import { Avatar } from '../components/widgets'
 
-const SUGGESTIONS = [
-  '混合检索的融合权重是怎么定的?历史上调过几次?',
-  'Weibull 衰减的三档参数分别在哪里配置?',
-  '两阶段去重的 CONTRADICT 分支是什么时候加的,为什么?',
-  '哪些模块依赖 LanceDB Storage?改动它的爆炸半径有多大?',
+// 接口不可用时的本地兜底建议
+const FALLBACK_SUGGESTIONS = [
+  '项目整体架构是怎样的?有哪些核心模块?',
+  '最近的改动主要集中在哪些模块?',
+  '项目里有哪些关键的设计决策和取舍?',
+  '核心功能的实现思路是怎样的?',
 ]
 
 type EvidenceItem = { type: string; count: number }
@@ -40,6 +41,8 @@ export default function QA() {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const ask = useAsk(id)
+  const { data: suggData, isLoading: suggLoading } = useQASuggestions(id)
+  const suggestions = suggData?.questions?.length ? suggData.questions : FALLBACK_SUGGESTIONS
 
   const submit = async (q?: string) => {
     const question = (q || input).trim()
@@ -107,25 +110,32 @@ export default function QA() {
                 给出当前实现细节与历史上出现过的不同思路。
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 18, maxWidth: 500 }}>
-                {SUGGESTIONS.map((s) => (
-                  <div
-                    key={s}
-                    onClick={() => submit(s)}
-                    style={{
-                      cursor: 'pointer',
-                      padding: '10px 14px',
-                      borderRadius: 10,
-                      border: '1px solid var(--border)',
-                      fontSize: 13,
-                      lineHeight: 1.5,
-                      transition: 'all .15s',
-                    }}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary)' }}
-                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
-                  >
-                    {s}
+                {suggLoading ? (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 20 }}>
+                    <Spin size="small" />
+                    <span style={{ marginLeft: 8, color: 'var(--text-3)', fontSize: 13 }}>正在生成项目相关问题…</span>
                   </div>
-                ))}
+                ) : (
+                  suggestions.map((s) => (
+                    <div
+                      key={s}
+                      onClick={() => submit(s)}
+                      style={{
+                        cursor: 'pointer',
+                        padding: '10px 14px',
+                        borderRadius: 10,
+                        border: '1px solid var(--border)',
+                        fontSize: 13,
+                        lineHeight: 1.5,
+                        transition: 'all .15s',
+                      }}
+                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--primary)' }}
+                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)' }}
+                    >
+                      {s}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           ) : (
