@@ -6,7 +6,7 @@ import { useWikiList, useWikiPage, useRefreshWiki } from '../hooks/api'
 import { JobStatusEmpty } from '../components/JobStatusEmpty'
 
 type WikiPageItem = {
-  slug: string
+  id: string
   title: string
   group?: string
   hasNewCommits?: boolean
@@ -28,7 +28,7 @@ export default function Wiki() {
   const list = pages as WikiPageItem[]
 
   useEffect(() => {
-    if (!activeSlug && list.length > 0) setActiveSlug(list[0].slug)
+    if (!activeSlug && list.length > 0) setActiveSlug(list[0].id)
   }, [list, activeSlug])
 
   const { data: page, isLoading: pageLoading } = useWikiPage(id, activeSlug)
@@ -84,8 +84,8 @@ export default function Wiki() {
               <div style={{ fontSize: 12, color: 'var(--text-3)', padding: '4px 8px' }}>{group}</div>
               {items.map((p) => (
                 <div
-                  key={p.slug}
-                  onClick={() => setActiveSlug(p.slug)}
+                  key={p.id}
+                  onClick={() => setActiveSlug(p.id)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -94,9 +94,9 @@ export default function Wiki() {
                     borderRadius: 6,
                     cursor: 'pointer',
                     fontSize: 13,
-                    background: activeSlug === p.slug ? 'var(--primary-bg)' : 'transparent',
-                    color: activeSlug === p.slug ? 'var(--primary)' : 'var(--text)',
-                    fontWeight: activeSlug === p.slug ? 600 : 400,
+                    background: activeSlug === p.id ? 'var(--primary-bg)' : 'transparent',
+                    color: activeSlug === p.id ? 'var(--primary)' : 'var(--text)',
+                    fontWeight: activeSlug === p.id ? 600 : 400,
                   }}
                 >
                   <span style={{ flex: 1 }}>{p.title}</span>
@@ -129,9 +129,9 @@ export default function Wiki() {
           <div>
             <Space style={{ marginBottom: 12 }}>
               <Tag color="purple">LLM 由社区结构 + commit 理解生成</Tag>
-              {page.updatedAt || page.updated_at ? (
+              {page.updatedAt || page.updated_at || page.updated ? (
                 <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
-                  更新于 {page.updatedAt || page.updated_at}
+                  更新于 {page.updatedAt || page.updated_at || page.updated}
                 </span>
               ) : null}
             </Space>
