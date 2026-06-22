@@ -4,6 +4,7 @@ import { App, Button, Card, Empty, Space, Spin, Tag } from 'antd'
 import { ReloadOutlined, MessageOutlined } from '@ant-design/icons'
 import { useWikiList, useWikiPage, useRefreshWiki } from '../hooks/api'
 import { JobStatusEmpty } from '../components/JobStatusEmpty'
+import { Markdown } from '../components/Markdown'
 
 type WikiPageItem = {
   id: string
@@ -148,7 +149,7 @@ export default function Wiki() {
             )}
 
             {sections.length === 0 ? (
-              <div style={{ color: 'var(--text-2)', lineHeight: 1.8 }}>{page.content || page.body || '暂无内容'}</div>
+              <Markdown>{page.content || page.body || '暂无内容'}</Markdown>
             ) : (
               sections.map((s, i) => (
                 <div key={i} style={{ marginBottom: 28 }}>
@@ -161,9 +162,7 @@ export default function Wiki() {
                   }}>
                     {s.heading || s.title}
                   </h2>
-                  <div style={{ color: 'var(--text-2)', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-                    {s.body || s.content}
-                  </div>
+                  <Markdown>{s.body || s.content}</Markdown>
                 </div>
               ))
             )}

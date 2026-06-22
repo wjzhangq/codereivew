@@ -4,6 +4,7 @@ import { Button, Card, Input, Space, Spin, Tag } from 'antd'
 import { SendOutlined, StarOutlined } from '@ant-design/icons'
 import { useAsk, useQASuggestions } from '../hooks/api'
 import { Avatar } from '../components/widgets'
+import { Markdown } from '../components/Markdown'
 
 // 接口不可用时的本地兜底建议
 const FALLBACK_SUGGESTIONS = [
@@ -64,18 +65,6 @@ export default function QA() {
       setMessages((prev) => [...prev, { role: 'ai', content: '抱歉,检索或生成失败。请稍后重试。' }])
     }
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-  }
-
-  const renderAnswer = (text: string) => {
-    // Simple bold support: **text**
-    const parts = text.split(/(\*\*[^*]+\*\*)/g)
-    return parts.map((p, i) =>
-      p.startsWith('**') && p.endsWith('**') ? (
-        <strong key={i}>{p.slice(2, -2)}</strong>
-      ) : (
-        <span key={i}>{p}</span>
-      ),
-    )
   }
 
   const isEmpty = messages.length === 0
@@ -176,7 +165,7 @@ export default function QA() {
                     </div>
                   )}
 
-                  <div>{renderAnswer(msg.content)}</div>
+                  <div>{msg.role === 'ai' ? <Markdown>{msg.content}</Markdown> : msg.content}</div>
 
                   {msg.role === 'ai' && msg.history && msg.history.length > 0 && (
                     <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border-2)' }}>
