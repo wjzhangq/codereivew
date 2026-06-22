@@ -1,0 +1,58 @@
+# ===========================================================================
+# Docker 构建上下文忽略规则 —— 排除运行时数据/密钥/缓存,加速构建
+# ===========================================================================
+
+# --- 版本控制 ---
+.git/
+.gitignore
+
+# --- 运行时数据(持久卷,绝不进镜像) ---
+storage/
+backend/storage/
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal
+**/*.sqlite.bak
+
+# --- 含明文密钥的本地配置(仅排除真实 config,保留 example 模板) ---
+config/config.yaml
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+**/__pycache__/
+**/*.py[cod]
+*.egg-info/
+backend/code_review_backend.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg
+
+# --- Node / 前端 ---
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# --- 工具 / 索引缓存 ---
+.gitnexus/
+.code-review-graph/
+.codegraph/
+
+# --- 编辑器 / 系统 / 文档 ---
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+*.log
+*.md

@@ -11,7 +11,7 @@
 │  安全  gitleaks + Semgrep + osv-scanner + LLM 复审                       │
 │  LLM   多 provider(OpenAI 兼容)+ 分级路由(cheap / default)             │
 │  前端  React + Vite + Ant Design v5 + React Query + Zustand             │
-│  部署  Docker Compose → k8s                                              │
+│  部署  Docker Compose(多阶段镜像 · 数据/配置外置)→ k8s              │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,10 +90,41 @@ npm install && npm run dev                   # http://localhost:5173
 ### 2. Docker 一键部署
 
 ```bash
+# 配置外置:复制模板到 ./config,容器通过 volume 挂载读取(明文密钥不进镜像)
+cp config/config.example.yaml config/config.yaml
+
 export JWT_SECRET="$(openssl rand -hex 32)"
 export CR_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')"
 docker compose up --build
-# api(:8080) + worker(2 副本) + web(:5173),storage/ 持久卷
+# api(:8080) + worker(2 副本) + web(:5173)
+```
+
+**镜像构建优化(多阶段)** —— 后端 `backend/Dockerfile` 拆成 4 个 stage,api/worker 各取所需:
+
+| Stage | 作用 |
+|---|---|
+| `scanner` | 仅下载 gitleaks / osv-scanner 二进制,独立成层(极少变动,缓存稳定) |
+| `deps` | `uv sync --frozen`(基于 `pyproject.toml` + `uv.lock`)锁定依赖到独立层 |
+| `api` | 精简运行镜像:依赖 + 应用代码,非 root(uid 10001),**不带 scanner、不烤 config** |
+| `worker` | 在 `api` 基础上 `COPY --from=scanner` 叠加扫描二进制 + semgrep |
+
+compose 按 `target` 分配镜像:`api` → `target: api`(更小),`worker` → `target: worker`(带扫描器)。
+
+**数据与配置全部映射到外部**(`docker-compose.yml` volumes):
+
+| 宿主 / 卷 | 容器路径 | 用途 |
+|---|---|---|
+| `storage`(named volume) | `/app/storage` | 运行时数据:仓库镜像 / 图谱 / 向量 / 报告 / OLAP |
+| `./config`(bind mount) | `/config` | 外部配置目录,`CR_CONFIG=/config/config.yaml` |
+
+> 优化要点:`.dockerignore` 排除 `storage/`、`node_modules/`、`config.yaml` 等(密钥不进构建上下文);改应用代码只重跑代码层、不重装依赖;前端用 `npm ci` 锁定 `package-lock.json` 可复现构建。
+
+构建/校验:
+
+```bash
+docker compose build                                       # 首次全量
+docker compose run --rm worker which gitleaks osv-scanner  # worker 内应都有
+docker compose run --rm api which gitleaks || echo "api 无扫描器(预期)"
 ```
 
 ### 3. Kubernetes
@@ -179,7 +210,10 @@ code-review/
 │       ├── components/widgets.tsx    # Health 环 / Sev / MiniBars / CatTag / Avatar
 │       ├── store/auth.ts            # zustand(登录态/侧栏)
 │       └── api/client.ts            # axios 统一拆包
-├── docker-compose.yml                # api + worker + web
+├── docker-compose.yml                # api + worker + web(按 target 分配镜像)
+├── .dockerignore                     # 排除 storage/node_modules/config.yaml/缓存
+├── backend/Dockerfile                # 多阶段:scanner / deps / api / worker
+├── frontend/Dockerfile               # node 构建(npm ci)→ nginx 静态服务
 ├── deploy/k8s/codereview.yaml        # Namespace + PVC + Secret + Deployments + Service
 └── storage/                          # 运行时(.gitignore)
 ```
