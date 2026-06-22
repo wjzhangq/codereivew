@@ -7,3 +7,20 @@ html,body,#root{height:100%;margin:0}body{background:var(--bg-layout)}.mono{font
 .pulse-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);display:inline-block}.pulse-dot.fresh{background:#16a34a;animation:pulse 1.6s infinite}@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 6px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
 .block-problem{background:#fef2f2;border-left:3px solid #dc2626;padding:10px 14px;border-radius:0 8px 8px 0}
 .block-approach{background:#f0fdf4;border-left:3px solid #16a34a;padding:10px 14px;border-radius:0 8px 8px 0}
+.markdown-body{color:var(--text-2);line-height:1.8;word-break:break-word}
+.markdown-body>*:first-child{margin-top:0}
+.markdown-body>*:last-child{margin-bottom:0}
+.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4{color:var(--text);margin:1.2em 0 .5em;font-weight:600;line-height:1.4}
+.markdown-body h1{font-size:1.5em}.markdown-body h2{font-size:1.25em}.markdown-body h3{font-size:1.1em}.markdown-body h4{font-size:1em}
+.markdown-body p{margin:0 0 .8em}
+.markdown-body ul,.markdown-body ol{padding-left:1.5em;margin:0 0 .8em}.markdown-body li{margin-bottom:.3em}
+.markdown-body blockquote{border-left:3px solid var(--primary-border);padding:2px 12px;color:var(--text-3);margin:.8em 0}
+.markdown-body table{border-collapse:collapse;width:100%;margin:.8em 0;font-size:13px}
+.markdown-body th,.markdown-body td{border:1px solid var(--border);padding:8px 12px;text-align:left}
+.markdown-body th{background:var(--fill-quaternary);font-weight:600;color:var(--text)}
+.markdown-body a{color:var(--primary);text-decoration:none}.markdown-body a:hover{text-decoration:underline}
+.markdown-body hr{border:none;border-top:1px solid var(--border);margin:1.5em 0}
+.markdown-body strong{color:var(--text);font-weight:600}
+.markdown-body img{max-width:100%;border-radius:8px}
+.markdown-body .code-block{margin:.8em 0}
+.markdown-body .code-block code{font-family:inherit;font-size:inherit;background:none;color:inherit;padding:0}
