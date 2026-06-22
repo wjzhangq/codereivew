@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import sqlite3
 from pathlib import Path
 
@@ -30,6 +29,14 @@ except Exception:  # noqa: BLE001
 
 
 def graph_db_path(project_id: str, branch: str) -> Path:
+    """图谱 SQLite 路径。
+
+    引擎可用时直接指向 worktree 内的权威库 `<wt>/.code-review-graph/graph.db`
+    —— 不再复制到 storage/graphs，应用只读这一份。引擎不可用(回落)时仍写
+    storage/graphs/<pid>/<safe>.sqlite(回落 schema)。
+    """
+    if _ENGINE_AVAILABLE:
+        return worktree_path(project_id, branch) / ".code-review-graph" / "graph.db"
     s = get_settings()
     safe = branch.replace("/", "__")
     p = Path(s.storage.graphs_dir) / project_id / f"{safe}.sqlite"
@@ -40,16 +47,16 @@ def graph_db_path(project_id: str, branch: str) -> Path:
 def build_graph(project_id: str, branch: str) -> Path:
     """对一个 worktree 跑引擎解析 → 写图谱 SQLite。返回路径。"""
     wt = worktree_path(project_id, branch)
-    out = graph_db_path(project_id, branch)
     if _ENGINE_AVAILABLE:
         log.info("running code-review-graph on %s@%s", project_id, branch)
-        # 引擎固定输出到 <repo_root>/.code-review-graph/graph.db，不支持自定义路径
-        _crg_build(repo_root=str(wt), full_rebuild=True, postprocess="minimal")  # type: ignore
-        crg_db = wt / ".code-review-graph" / "graph.db"
-        shutil.copy2(crg_db, out)
-        log.info("graph copied to %s", out)
+        # 引擎固定输出到 <repo_root>/.code-review-graph/graph.db，不支持自定义路径。
+        # postprocess="full":生成 flows + communities(模块图谱依赖 communities)。
+        _crg_build(repo_root=str(wt), full_rebuild=True, postprocess="full")  # type: ignore
+        out = wt / ".code-review-graph" / "graph.db"  # 应用直接读这一份,不复制
+        log.info("graph ready at %s", out)
     else:
         log.warning("code-review-graph 未安装,使用内置最小解析(M0 回落)")
+        out = graph_db_path(project_id, branch)
         _fallback_build(wt, out)
     return out
 
