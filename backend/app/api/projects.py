@@ -106,7 +106,7 @@ class WhitelistReq(BaseModel):
     whitelisted: bool
 
 
-@router.put("/{pid}/branches/{name}/whitelist")
+@router.put("/{pid}/branches/{name:path}/whitelist")
 def set_whitelist(pid: str, name: str, req: WhitelistReq, user: dict = Depends(current_user)):
     _check_access(user, pid)
     with tx() as conn:
@@ -159,6 +159,39 @@ def reindex(pid: str, user: dict = Depends(current_user)):
     jid = queue.enqueue("index_build", pid, priority=queue.PRIORITY_MANUAL,
                         detail="手动重新索引")
     return {"jobId": jid}
+
+
+# --------------------------------------------------------------------------- #
+# 主动同步远程
+# --------------------------------------------------------------------------- #
+@router.post("/{pid}/sync")
+def sync_remote(pid: str, user: dict = Depends(current_user)):
+    _check_access(user, pid)
+    conn = get_conn_ro()
+    try:
+        row = conn.execute("SELECT deploy_key_enc FROM projects WHERE id=?", (pid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "项目不存在")
+    finally:
+        conn.close()
+
+    from app.core.security import decrypt_secret
+    from app.git.repo import fetch, bare_path
+    from app.queue.handlers import _sync_branches
+
+    deploy_key = decrypt_secret(row["deploy_key_enc"]) if row["deploy_key_enc"] else None
+    bare = bare_path(pid)
+    if not bare.exists():
+        raise HTTPException(409, "仓库尚未克隆,请先触发索引")
+
+    try:
+        fetch(pid, deploy_key)
+    except RuntimeError as e:
+        raise HTTPException(502, f"git fetch 失败: {e}")
+
+    _sync_branches(pid)
+    audit("sync_remote", project=pid)
+    return {"ok": True}
 
 
 # --------------------------------------------------------------------------- #

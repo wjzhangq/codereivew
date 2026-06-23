@@ -11,6 +11,14 @@ export const useCreateProject = () => {
 export const useReindex = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/reindex`) })
 
 export const useBranches = (id: string) => useQuery({ queryKey: ['branches', id], queryFn: () => getList<any>(`/api/projects/${id}/branches`), enabled: !!id })
+export const useSyncRemote = (id: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => post(`/api/projects/${id}/sync`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['branches', id] }),
+  })
+}
+
 export const useSetWhitelist = (id: string) => {
   const qc = useQueryClient()
   return useMutation({

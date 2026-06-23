@@ -14,11 +14,14 @@ import {
   InfoCircleOutlined,
   HistoryOutlined,
   BookOutlined,
+  SyncOutlined,
+  WarningOutlined,
 } from '@ant-design/icons'
 import {
   useProject,
   useBranches,
   useSetWhitelist,
+  useSyncRemote,
   useGraph,
   useReindex,
 } from '../hooks/api'
@@ -319,6 +322,8 @@ function ModuleDrawer({
 function BranchPanel({ projectId }: { projectId: string }) {
   const { data: branches = [] } = useBranches(projectId)
   const setWhitelist = useSetWhitelist(projectId)
+  const syncRemote = useSyncRemote(projectId)
+  const [syncError, setSyncError] = useState<string | null>(null)
 
   const whitelisted = branches.filter((b: any) => b.whitelisted).length
 
@@ -330,6 +335,17 @@ function BranchPanel({ projectId }: { projectId: string }) {
     setWhitelist.mutate({ name: b.name, whitelisted: !b.whitelisted })
   }
 
+  const doSync = () => {
+    setSyncError(null)
+    syncRemote.mutate(undefined, {
+      onSuccess: () => message.success('已同步远程分支'),
+      onError: (err: any) => {
+        const msg = err?.response?.data?.detail ?? err?.message ?? '网络错误,无法连接远程仓库'
+        setSyncError(msg)
+      },
+    })
+  }
+
   return (
     <Card
       title={
@@ -337,9 +353,40 @@ function BranchPanel({ projectId }: { projectId: string }) {
           <BranchesOutlined /> 分支白名单
         </span>
       }
-      extra={<Tag>{whitelisted}/{branches.length} 已纳入</Tag>}
+      extra={
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Tag>{whitelisted}/{branches.length} 已纳入</Tag>
+          <Button
+            size="small"
+            icon={<SyncOutlined spin={syncRemote.isPending} />}
+            loading={syncRemote.isPending}
+            onClick={doSync}
+          >
+            同步远程
+          </Button>
+        </span>
+      }
       styles={{ body: { padding: '6px 8px' } }}
     >
+      {syncError && (
+        <div
+          style={{
+            margin: '6px 8px 4px',
+            padding: '8px 12px',
+            borderRadius: 6,
+            background: 'var(--error-bg, #fff2f0)',
+            border: '1px solid var(--error-border, #ffccc7)',
+            color: 'var(--error, #ff4d4f)',
+            fontSize: 12,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+          }}
+        >
+          <WarningOutlined style={{ marginTop: 1, flexShrink: 0 }} />
+          <span style={{ wordBreak: 'break-all' }}>{syncError}</span>
+        </div>
+      )}
       {branches.map((b: any) => (
         <div
           key={b.name}
