@@ -102,6 +102,15 @@ class GraphStore:
                 best[fp] = (cid, c)
         return {fp: cid for fp, (cid, _) in best.items()}
 
+    def _loc_per_community(self) -> dict[int, int]:
+        """引擎 schema 专用:按 nodes 表的 end_line - start_line 累加各 community LOC。"""
+        cur = self.db.execute(
+            "SELECT community_id, SUM(end_line - start_line) AS loc "
+            "FROM nodes WHERE community_id IS NOT NULL "
+            "AND end_line IS NOT NULL AND start_line IS NOT NULL "
+            "AND kind != 'File' GROUP BY community_id")
+        return {r["community_id"]: r["loc"] or 0 for r in cur.fetchall()}
+
     # ---------- 模块 / 边 ---------- #
     def modules(self) -> list[Module]:
         if self._engine_schema:
@@ -114,13 +123,15 @@ class GraphStore:
             files_per_cid: dict[int, int] = {}
             for cid in self._file_community_map().values():
                 files_per_cid[cid] = files_per_cid.get(cid, 0) + 1
+            loc_per_cid = self._loc_per_community()
             n = max(len(rows), 1)
             result = []
             for i, r in enumerate(rows):
                 ang = 2 * math.pi * i / n
                 result.append(Module(
                     id=str(r["id"]), name=r["name"] or f"cluster-{r['id']}",
-                    cat="core", files=files_per_cid.get(r["id"], 0), loc=r["size"] or 0,
+                    cat="core", files=files_per_cid.get(r["id"], 0),
+                    loc=loc_per_cid.get(r["id"], 0),
                     x=50 + 32 * math.cos(ang), y=50 + 32 * math.sin(ang),
                     health=max(0, min(100, int((r["cohesion"] or 0) * 100))),
                     description=r["description"] or "",

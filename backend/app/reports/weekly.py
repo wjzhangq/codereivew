@@ -61,6 +61,7 @@ class AuthorWeekStats:
     deletions: int = 0
     dir_counts: Counter = field(default_factory=Counter)
     subjects: list[str] = field(default_factory=list)
+    modules: list[str] = field(default_factory=list)  # 来自 commit_analysis
     conventional_ratio: float = 0.0
     quality_score: float = 0.0
     scope_desc: str = ""
@@ -247,10 +248,12 @@ def describe_with_llm(st: AuthorWeekStats) -> tuple[str, str]:
 
     cats = ", ".join(f"{k}:{v}" for k, v in st.categories.most_common())
     subjects = "\n".join(f"- {s}" for s in st.subjects[:30])
+    mod_line = "、".join(st.modules[:8]) if st.modules else "(未记录)"
     user = (
         f"开发者:{st.author}\n"
         f"本周提交数:{st.commits}\n"
         f"类别分布:{cats}\n"
+        f"涉及模块:{mod_line}\n"
         f"主要改动目录:{', '.join(st.top_dirs) or '(无)'}\n"
         f"改动行数:+{st.insertions} / -{st.deletions}\n"
         f"提交规范率:{st.conventional_ratio:.0%}\n"
@@ -329,7 +332,8 @@ def render_markdown(project_id: str, since: str, until: str,
         lines.append(f"- **功能范围**:{st.scope_desc or '—'}")
         if st.quality_note:
             lines.append(f"- **质量点评**:{st.quality_note}")
-        lines.append(f"- **改动模块**:{', '.join(st.top_dirs) or '—'}")
+        mod_display = ", ".join(st.modules[:6]) if st.modules else ", ".join(st.top_dirs) or "—"
+        lines.append(f"- **改动模块**:{mod_display}")
         lines.append(f"- **指标**:{st.commits} 提交 · "
                      f"{st.files_changed} 文件 · +{st.insertions}/-{st.deletions} 行 · "
                      f"质量 {st.quality_score:.1f}/100")
@@ -345,9 +349,41 @@ def build_report(project_id: str, since: str, until: str,
     """采集 → 聚合 → 评分 → 描述 → 渲染。返回 (markdown, stats)。"""
     commits = collect_commits(project_id, since, until)
     stats = aggregate_by_author(commits)
+    _enrich_modules(project_id, since, until, stats)
     enrich_descriptions(stats, use_llm=use_llm)
     md = render_markdown(project_id, since, until, stats)
     return md, stats
+
+
+def _enrich_modules(project_id: str, since: str, until: str,
+                    stats: dict[str, AuthorWeekStats]) -> None:
+    """从 commit_analysis 表取各作者涉及的图谱模块,填入 stats[author].modules。"""
+    import json as _json
+    try:
+        from app.db.session import get_conn_ro
+        conn = get_conn_ro()
+        try:
+            rows = conn.execute(
+                "SELECT author, modules FROM commit_analysis "
+                "WHERE project_id=? AND committed_at >= ? AND committed_at < ?",
+                (project_id, since, until)).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        log.debug("_enrich_modules: DB 读取失败,跳过: %s", e)
+        return
+
+    for row in rows:
+        author = row["author"]
+        if author not in stats:
+            continue
+        try:
+            mods = _json.loads(row["modules"]) if row["modules"] else []
+        except (ValueError, TypeError):
+            mods = []
+        for m in (mods if isinstance(mods, list) else []):
+            if m and m not in stats[author].modules:
+                stats[author].modules.append(m)
 
 
 def stats_to_json(stats: dict[str, AuthorWeekStats]) -> list[dict]:
@@ -361,6 +397,7 @@ def stats_to_json(stats: dict[str, AuthorWeekStats]) -> list[dict]:
         "insertions": st.insertions,
         "deletions": st.deletions,
         "topDirs": st.top_dirs,
+        "modules": st.modules,
         "conventionalRatio": round(st.conventional_ratio, 3),
         "qualityScore": st.quality_score,
         "scope": st.scope_desc,

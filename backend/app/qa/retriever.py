@@ -113,15 +113,34 @@ def answer(project_id: str, question: str, branch: str | None = None) -> dict:
     branch = branch or _default_branch(project_id)
     qvec = embed_one(question)
 
-    # 1) 向量召回(blast-radius/模块预过滤可在此加 modules=...)
+    # 1) 图谱模块预过滤:用 blast-radius 找相关模块,缩小向量扫描范围
+    from app.parsing.graph_store import GraphStore
+    related_modules: list[str] | None = None
+    try:
+        gs = GraphStore(project_id, branch)
+        all_mods = {m.id: m.name for m in gs.modules()}
+        q_lower = question.lower()
+        seed_mods = [mid for mid, name in all_mods.items()
+                     if name.lower() in q_lower or any(w in name.lower()
+                        for w in q_lower.split() if len(w) > 2)]
+        if seed_mods:
+            radius: set[str] = set(seed_mods)
+            for mid in seed_mods:
+                radius.update(gs.blast_radius(mid))
+            related_modules = list(radius) or None
+        gs.close()
+    except FileNotFoundError:
+        pass
+
+    # 2) 向量召回(有模块预过滤则限定范围)
     vs = VectorStore(project_id)
-    seeds = vs.knn(qvec, branch=branch, k=8)
+    seeds = vs.knn(qvec, branch=branch, modules=related_modules, k=8)
     vs.close()
 
-    # 2) commit 演进史(关键词召回)
+    # 3) commit 演进史(关键词召回)
     history = _related_commits(project_id, question)
 
-    # 3) 组织上下文 → LLM
+    # 4) 组织上下文 → LLM
     code_ctx = "\n\n".join(
         f"// {s['file']}:{s['start_line']} [{s['module']}]\n{s['content'][:800]}"
         for s in seeds[:6])
@@ -135,7 +154,7 @@ def answer(project_id: str, question: str, branch: str | None = None) -> dict:
     return {
         "answer": ans,
         "evidence": [
-            {"type": "graph", "count": len(modules)},
+            {"type": "graph", "count": len(related_modules) if related_modules else 0},
             {"type": "vector", "count": len(seeds)},
             {"type": "history", "count": len(history)},
         ],

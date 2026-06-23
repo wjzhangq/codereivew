@@ -91,20 +91,21 @@ def _enqueue_post_index(project_id: str, branches: list[str]) -> None:
 
 def handle_index_incremental(job: dict) -> JobResult:
     """增量:只重解析/重嵌变更分支。"""
-    from app.git import worktree
+    from app.git import repo, worktree
     from app.parsing import engine
     pid = job["project_id"]
     br = job["branch"]
     p = _project(pid)
     key = _deploy_key(p)
-    from app.git import repo
     repo.fetch(pid, key)
     worktree.add_worktree(pid, br)
     engine.build_graph(pid, br)
     _index_vectors(pid, br)  # SHA-256 复用未变更 chunk
     _mark_branch_indexed(pid, br)
+
+    change_note = _detect_branch_changes(pid, br)
     queue.update_progress(job["id"], 100, f"增量索引 {br} 完成")
-    return JobResult(produced=1, note=f"增量索引 {br} 完成")
+    return JobResult(produced=1, note=f"增量索引 {br} 完成{change_note}")
 
 
 def _index_vectors(project_id: str, branch: str) -> None:
@@ -123,7 +124,38 @@ def _index_vectors(project_id: str, branch: str) -> None:
     vs.close()
 
 
-# --------------------------------------------------------------------------- #
+def _detect_branch_changes(project_id: str, branch: str) -> str:
+    """用图谱 detect_changes 分析最新 commit 的影响范围,返回摘要字符串。
+
+    取最近 1 条 commit 的变更文件,查询受影响模块与爆炸半径,写日志。
+    无图谱或无 commit 时静默返回空串。
+    """
+    from app.git.history import list_commits, get_commit_diff
+    from app.parsing.graph_store import GraphStore
+    try:
+        shas = list_commits(project_id, branch, last_count=1)
+        if not shas:
+            return ""
+        diff = get_commit_diff(project_id, shas[0])
+        changed_files = [f.file for f in diff.files]
+        if not changed_files:
+            return ""
+        gs = GraphStore(project_id, branch)
+        result = gs.detect_changes(changed_files)
+        gs.close()
+        n_mod = len(result["affected_modules"])
+        n_rad = len(result["blast_radius"])
+        log.info("detect_changes %s@%s: %d affected modules, blast_radius=%d",
+                 project_id, branch, n_mod, n_rad)
+        if n_mod:
+            return f";影响模块 {n_mod} 个,爆炸半径 {n_rad} 个"
+        return ""
+    except Exception as e:  # noqa: BLE001
+        log.debug("detect_changes 跳过: %s", e)
+        return ""
+
+
+
 # commit 分析 / 安全扫描 / 报告 / wiki
 # --------------------------------------------------------------------------- #
 def handle_commit_analyze(job: dict) -> JobResult:

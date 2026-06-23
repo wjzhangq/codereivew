@@ -142,13 +142,19 @@ def _llm_review(findings: list[dict], project_id: str, branch: str) -> list[dict
     from app.parsing.graph_store import GraphStore
     try:
         gs = GraphStore(project_id, branch)
-        radius_fn = gs.blast_radius
+        has_gs = True
     except FileNotFoundError:
-        radius_fn = lambda _: []  # noqa: E731
+        gs = None
+        has_gs = False
 
     for f in findings[:20]:  # 限量
+        if has_gs and f.get("file"):
+            mods = gs.modules_for_files([f["file"]])
+            f["module"] = mods[0] if mods else ""
+            blast = gs.blast_radius(mods[0]) if mods else []
+        else:
+            blast = []
         context = f"文件:{f['file']} L{f['line']}\n证据:{f['evidence']}\n规则:{f['rule']}"
-        blast = radius_fn(f.get("module", ""))
         prompt = (f"安全发现:\n{context}\n爆炸半径:{blast}\n"
                   "判断是否为真实风险,并给出修复建议。输出 JSON:{{is_real, suggestion}}")
         out = client.chat_json("qa", "你是安全审查专家。", prompt)
@@ -156,10 +162,8 @@ def _llm_review(findings: list[dict], project_id: str, branch: str) -> list[dict
             f["suggestion"] = out["suggestion"]
         f["llm_reviewed"] = True
         f["blast"] = len(blast)
-    try:
-        gs.close()  # type: ignore
-    except Exception:
-        pass
+    if gs is not None:
+        gs.close()
     return findings
 
 
