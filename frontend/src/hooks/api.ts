@@ -23,6 +23,11 @@ export const useGraph = (id: string, branch?: string) => useQuery({ queryKey: ['
 export const useCommits = (id: string, range = '30d') => useQuery({ queryKey: ['commits', id, range], queryFn: () => getList<any>(`/api/projects/${id}/commits`, { range }), enabled: !!id })
 export const useAnalyzeCommits = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/analyze`) })
 export const useContributors = (id: string, mode: 'log' | 'blame') => useQuery({ queryKey: ['contrib', id, mode], queryFn: () => getOne<any>(`/api/projects/${id}/contributors`, { mode }), enabled: !!id })
+export const useWeeklyReport = (id: string, params: { week?: string; llm?: boolean }) => useQuery({
+  queryKey: ['weekly', id, params.week ?? 'last', params.llm ?? true],
+  queryFn: () => getOne<any>(`/api/projects/${id}/weekly`, { week: params.week, llm: params.llm }),
+  enabled: !!id,
+})
 
 export const useFindings = (id: string, status?: string) => useQuery({ queryKey: ['findings', id, status], queryFn: () => getList<any>(`/api/projects/${id}/findings`, { status }), enabled: !!id })
 export const useScan = (id: string) => useMutation({ mutationFn: () => post(`/api/projects/${id}/scan`) })

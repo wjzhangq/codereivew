@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import current_user
 from app.api.projects import _check_access, _default_branch
@@ -67,3 +67,35 @@ def trigger_period(pid: str, range: str = "30d", user: dict = Depends(current_us
     jid = queue.enqueue("period_report", pid, payload={"range": range},
                         priority=queue.PRIORITY_MANUAL, detail="周期报告")
     return {"jobId": jid}
+
+
+@router.get("/{pid}/weekly")
+def get_weekly(pid: str, week: str | None = None, since: str | None = None,
+               until: str | None = None, llm: bool = True,
+               user: dict = Depends(current_user)):
+    """按周汇总各贡献者改动(功能范围/类别/质量)。
+
+    周期解析:since+until 优先 → week(对齐到周一)→ 默认上一个完整自然周。
+    llm=false 时跳过 LLM,仅用规则指标(更快/省 token)。
+    """
+    _check_access(user, pid)
+    from app.reports import weekly
+
+    if since and until:
+        s, u = since, until
+    elif week:
+        s, u = weekly.week_of(week)
+    else:
+        s, u = weekly.last_full_week()
+
+    try:
+        md, stats = weekly.build_report(pid, s, u, use_llm=llm)
+    except FileNotFoundError:
+        raise HTTPException(404, "项目仓库不存在(尚未克隆/索引?)")
+
+    return {
+        "project": pid, "since": s, "until": u,
+        "totalCommits": sum(st.commits for st in stats.values()),
+        "authors": weekly.stats_to_json(stats),
+        "markdown": md,
+    }

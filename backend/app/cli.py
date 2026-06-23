@@ -11,6 +11,7 @@
   projects              列出所有项目及状态
   status <project_id>   显示单个项目详情 + 分支 + 最近 jobs
   reindex <project_id>  前台同步执行全量索引(直接调 handle_index_build)
+  report <project_id>   按周汇总各贡献者改动(功能范围/类别/质量),输出 Markdown
 """
 from __future__ import annotations
 
@@ -377,6 +378,54 @@ def cmd_reindex(args: argparse.Namespace) -> int:
         queue.update_progress = _orig  # type: ignore
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    from app.core.config import get_settings
+    from app.db.session import get_conn
+    from app.reports import weekly
+
+    pid = args.project_id
+
+    # 校验项目存在(沿用 cmd_status 模式)
+    conn = get_conn()
+    try:
+        p = conn.execute("SELECT id, name FROM projects WHERE id=?", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if not p:
+        _fail(f"项目不存在: {pid}")
+        return 1
+
+    # 周期解析:--since/--until 优先,其次 --week,默认上一个完整自然周
+    if args.since and args.until:
+        since, until = args.since, args.until
+    elif args.week:
+        since, until = weekly.week_of(args.week)
+    else:
+        since, until = weekly.last_full_week()
+
+    try:
+        md, stats = weekly.build_report(pid, since, until, use_llm=not args.no_llm)
+    except FileNotFoundError as e:
+        _fail(str(e))
+        return 1
+    except Exception as e:  # noqa: BLE001
+        _fail(f"生成报告失败: {e}")
+        traceback.print_exc()
+        return 1
+
+    if args.stdout:
+        print(md)
+        return 0
+
+    s = get_settings()
+    out_dir = Path(s.storage.reports_dir) / pid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / f"weekly-{since}.md"
+    out_file.write_text(md, encoding="utf-8")
+    _ok(f"报告已生成: {out_file}  ({len(stats)} 位贡献者, {since} ~ {until})")
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
@@ -396,6 +445,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_reindex = sub.add_parser("reindex", help="前台同步强制重建索引")
     p_reindex.add_argument("project_id", help="项目 id (slug)")
 
+    p_report = sub.add_parser("report", help="按周汇总各贡献者改动并输出 Markdown")
+    p_report.add_argument("project_id", help="项目 id (slug)")
+    p_report.add_argument("--week", help="指定周(该周任意一天 YYYY-MM-DD,对齐到周一)")
+    p_report.add_argument("--since", help="自定义起始日 YYYY-MM-DD(与 --until 配对,覆盖 --week)")
+    p_report.add_argument("--until", help="自定义截止日 YYYY-MM-DD(开区间,不含当天)")
+    p_report.add_argument("--no-llm", action="store_true",
+                          help="跳过 LLM,仅用规则指标(更快/离线/省 token)")
+    p_report.add_argument("--stdout", action="store_true", help="打印到终端而非落盘")
+
     return parser
 
 
@@ -406,6 +464,7 @@ _DISPATCH = {
     "projects": cmd_projects,
     "status": cmd_status,
     "reindex": cmd_reindex,
+    "report": cmd_report,
 }
 
 
@@ -415,8 +474,13 @@ def main(argv: list[str] | None = None) -> int:
     from app.core.logging import setup_logging
     args = build_parser().parse_args(argv)
     # 检查/查询类命令压低日志噪声,让 ✓/✗ 输出对齐整洁;reindex 保留 INFO 进度日志。
-    quiet = args.command in {"doctor", "check-llm", "check-graph", "projects", "status"}
-    setup_logging(logging.WARNING if quiet else logging.INFO)
+    quiet = args.command in {"doctor", "check-llm", "check-graph", "projects",
+                             "status", "report"}
+    # report --stdout 要输出纯净 Markdown,连 WARNING 也压到 ERROR
+    if args.command == "report" and getattr(args, "stdout", False):
+        setup_logging(logging.ERROR)
+    else:
+        setup_logging(logging.WARNING if quiet else logging.INFO)
     return _DISPATCH[args.command](args)
 
 
