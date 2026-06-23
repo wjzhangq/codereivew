@@ -103,11 +103,11 @@ class GraphStore:
         return {fp: cid for fp, (cid, _) in best.items()}
 
     def _loc_per_community(self) -> dict[int, int]:
-        """引擎 schema 专用:按 nodes 表的 end_line - start_line 累加各 community LOC。"""
+        """引擎 schema 专用:按 nodes 表的 line_end - line_start 累加各 community LOC。"""
         cur = self.db.execute(
-            "SELECT community_id, SUM(end_line - start_line) AS loc "
+            "SELECT community_id, SUM(line_end - line_start) AS loc "
             "FROM nodes WHERE community_id IS NOT NULL "
-            "AND end_line IS NOT NULL AND start_line IS NOT NULL "
+            "AND line_end IS NOT NULL AND line_start IS NOT NULL "
             "AND kind != 'File' GROUP BY community_id")
         return {r["community_id"]: r["loc"] or 0 for r in cur.fetchall()}
 
