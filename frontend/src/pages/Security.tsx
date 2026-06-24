@@ -9,8 +9,10 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
 } from 'antd'
 import {
+  CopyOutlined,
   RightOutlined,
   SafetyCertificateOutlined,
   SyncOutlined,
@@ -79,6 +81,47 @@ export default function Security() {
       message.success('已触发扫描,稍后刷新查看结果')
     } catch {
       message.error('触发扫描失败')
+    }
+  }
+
+  const buildFixPrompt = (f: Finding) => {
+    const lines: string[] = []
+    lines.push(`# 安全漏洞修复请求`)
+    lines.push(``)
+    lines.push(`## 问题描述`)
+    lines.push(`- **标题**: ${f.title}`)
+    lines.push(`- **严重级别**: ${f.severity}`)
+    lines.push(`- **来源 / 规则**: ${f.source} / ${f.rule}`)
+    if (f.module) lines.push(`- **模块**: ${f.module}`)
+    lines.push(``)
+    lines.push(`## 文件位置`)
+    lines.push(`\`\`\``)
+    lines.push(`${f.file}${f.line ? `:${f.line}` : ''}`)
+    lines.push(`\`\`\``)
+    if (f.evidence) {
+      lines.push(``)
+      lines.push(`## 命中代码`)
+      lines.push(`\`\`\``)
+      lines.push(f.evidence)
+      lines.push(`\`\`\``)
+    }
+    if (f.suggestion) {
+      lines.push(``)
+      lines.push(`## 修复建议`)
+      lines.push(f.suggestion)
+    }
+    lines.push(``)
+    lines.push(`## 要求`)
+    lines.push(`请根据以上信息，修复该安全漏洞。只输出修改后的代码，并简要说明改动点。`)
+    return lines.join('\n')
+  }
+
+  const copyFixPrompt = async (f: Finding) => {
+    try {
+      await navigator.clipboard.writeText(buildFixPrompt(f))
+      message.success('已复制修复 Prompt')
+    } catch {
+      message.error('复制失败，请手动复制')
     }
   }
 
@@ -250,6 +293,11 @@ export default function Security() {
               </Button>
               <Button onClick={() => setStatusOf(active, 'ignored')}>忽略此规则</Button>
               <Button type="link">在仓库查看</Button>
+              <Tooltip title="复制结构化 Prompt，粘贴给 AI 直接修复">
+                <Button icon={<CopyOutlined />} onClick={() => copyFixPrompt(active)}>
+                  复制修复 Prompt
+                </Button>
+              </Tooltip>
             </Space>
           )
         }
