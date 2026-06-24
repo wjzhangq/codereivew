@@ -1,0 +1,36 @@
+# 使用 Docker Hub 预构建镜像，无需本地编译。
+# 用法: TAG=v1.0.2 docker compose -f docker-compose.hub.yml up -d
+services:
+  api:
+    image: wjzhangq/codereview-api:${TAG:-latest}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8080
+    ports: ["8080:8080"]
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-min-32-bytes-long}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes: ["storage:/app/storage", "./config:/config"]
+  worker:
+    image: wjzhangq/codereview-worker:${TAG:-latest}
+    command: python -m app.queue.worker
+    deploy: { replicas: 2 }
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod-min-32-bytes-long}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes: ["storage:/app/storage", "./config:/config"]
+  web:
+    image: wjzhangq/codereview-web:${TAG:-latest}
+    ports: ["5173:80"]
+    depends_on: ["api"]
+volumes:
+  storage:

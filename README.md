@@ -87,7 +87,71 @@ npm install && npm run dev                   # http://localhost:5173
 
 **API 文档**:http://localhost:8080/docs (FastAPI 自动生成 OpenAPI)
 
-### 2. Docker 一键部署
+### 2. Docker 预构建镜像(推荐)
+
+镜像托管于 Docker Hub，版本号与 git tag 保持一致：
+
+| 镜像 | 地址 | 说明 |
+|---|---|---|
+| API | [`wjzhangq/codereview-api`](https://hub.docker.com/r/wjzhangq/codereview-api) | FastAPI 服务，不含扫描器 |
+| Worker | [`wjzhangq/codereview-worker`](https://hub.docker.com/r/wjzhangq/codereview-worker) | 任务工作进程，含 gitleaks / semgrep / osv-scanner |
+| Web | [`wjzhangq/codereview-web`](https://hub.docker.com/r/wjzhangq/codereview-web) | nginx 静态前端 |
+
+**一键启动（无需构建）：**
+
+```bash
+# 1. 准备配置
+cp config/config.example.yaml config/config.yaml
+# 按需编辑 config/config.yaml（LLM provider、admin 密码等）
+
+# 2. 生成密钥
+export JWT_SECRET="$(openssl rand -hex 32)"
+export CR_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')"
+
+# 3. 拉取指定版本并启动（TAG 与 git tag 一致，如 v1.0.2）
+TAG=v1.0.2 docker compose -f docker-compose.hub.yml up -d
+# api(:8080) + worker(2 副本) + web(:5173)
+```
+
+`docker-compose.hub.yml` 直接引用预构建镜像，无需本地源码：
+
+```yaml
+services:
+  api:
+    image: wjzhangq/codereview-api:${TAG:-latest}
+    ports: ["8080:8080"]
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes: ["storage:/app/storage", "./config:/config"]
+  worker:
+    image: wjzhangq/codereview-worker:${TAG:-latest}
+    command: python -m app.queue.worker
+    deploy: { replicas: 2 }
+    environment:
+      CR_CONFIG: /config/config.yaml
+      JWT_SECRET: ${JWT_SECRET}
+      CR_ENCRYPTION_KEY: ${CR_ENCRYPTION_KEY:-}
+      GL_TOKEN: ${GL_TOKEN:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      MODELGATE_KEY: ${MODELGATE_KEY:-}
+      VLLM_KEY: ${VLLM_KEY:-}
+    volumes: ["storage:/app/storage", "./config:/config"]
+  web:
+    image: wjzhangq/codereview-web:${TAG:-latest}
+    ports: ["5173:80"]
+    depends_on: ["api"]
+volumes:
+  storage:
+```
+
+### 3. Docker 本地构建
 
 ```bash
 # 配置外置:复制模板到 ./config,容器通过 volume 挂载读取(明文密钥不进镜像)
@@ -99,7 +163,7 @@ docker compose up --build
 # api(:8080) + worker(2 副本) + web(:5173)
 ```
 
-**镜像构建优化(多阶段)** —— 后端 `backend/Dockerfile` 拆成 4 个 stage,api/worker 各取所需:
+**镜像构建优化(多阶段)** —— 后端 `backend/Dockerfile` 拆成 4 个 stage，api/worker 各取所需:
 
 | Stage | 作用 |
 |---|---|
@@ -107,8 +171,6 @@ docker compose up --build
 | `deps` | `uv sync --frozen`(基于 `pyproject.toml` + `uv.lock`)锁定依赖到独立层 |
 | `api` | 精简运行镜像:依赖 + 应用代码,非 root(uid 10001),**不带 scanner、不烤 config** |
 | `worker` | 在 `api` 基础上 `COPY --from=scanner` 叠加扫描二进制 + semgrep |
-
-compose 按 `target` 分配镜像:`api` → `target: api`(更小),`worker` → `target: worker`(带扫描器)。
 
 **数据与配置全部映射到外部**(`docker-compose.yml` volumes):
 
@@ -210,7 +272,8 @@ code-review/
 │       ├── components/widgets.tsx    # Health 环 / Sev / MiniBars / CatTag / Avatar
 │       ├── store/auth.ts            # zustand(登录态/侧栏)
 │       └── api/client.ts            # axios 统一拆包
-├── docker-compose.yml                # api + worker + web(按 target 分配镜像)
+├── docker-compose.yml                # api + worker + web(本地构建,按 target 分配镜像)
+├── docker-compose.hub.yml            # 使用 Docker Hub 预构建镜像(无需构建,TAG=版本号)
 ├── .dockerignore                     # 排除 storage/node_modules/config.yaml/缓存
 ├── backend/Dockerfile                # 多阶段:scanner / deps / api / worker
 ├── frontend/Dockerfile               # node 构建(npm ci)→ nginx 静态服务
