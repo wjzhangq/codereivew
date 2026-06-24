@@ -27,7 +27,7 @@ def get_findings(pid: str, status: str | None = None, user: dict = Depends(curre
     finally:
         conn.close()
     return {"data": [{
-        "id": r["id"], "sev": r["severity"], "rule": r["rule"], "source": r["source"],
+        "id": r["id"], "severity": r["severity"], "rule": r["rule"], "source": r["source"],
         "file": r["file"], "line": r["line"], "title": r["title"], "evidence": r["evidence"],
         "suggestion": r["suggestion"], "module": r["module"] or "—", "blast": r["blast"],
         "llmReviewed": bool(r["llm_reviewed"]), "status": r["status"],

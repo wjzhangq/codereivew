@@ -41,15 +41,15 @@ type Finding = {
 const SEV_ORDER: Array<Finding['severity']> = ['critical', 'high', 'medium', 'low']
 
 const STATUS_OPTIONS = [
-  { label: '待处理', value: 'open' },
-  { label: '已消除', value: 'resolved' },
   { label: '全部', value: 'all' },
+  { label: '待处理', value: 'new' },
+  { label: '已消除', value: 'resolved' },
 ]
 
 export default function Security() {
   const { id = '' } = useParams()
   const { message } = App.useApp()
-  const [status, setStatus] = useState<string>('open')
+  const [status, setStatus] = useState<string>('all')
   const [sevFilter, setSevFilter] = useState<Finding['severity'] | null>(null)
   const [active, setActive] = useState<Finding | null>(null)
 
